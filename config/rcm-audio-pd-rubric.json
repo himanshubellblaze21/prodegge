@@ -1,0 +1,518 @@
+{
+  "call_type": "RCM_TELE_PD",
+  "version": "1.0",
+  "aligned_to": "LAP Credit Policy V2.3, BCM PD Report V2.0, CAM Workbook V2.3",
+  "sections": [
+    {
+      "id": "A",
+      "name": "Call Opening, Identity & Consent",
+      "max_points": 8,
+      "criteria": [
+        {
+          "id": "A1",
+          "criterion": "Recording disclosure made at the start of the call",
+          "probe": "Inform the customer the call is being recorded for loan verification. / 'Yeh call recording par hai, loan verification ke liye.'",
+          "policy_ref": "RBI Fair Practices; Gate K3",
+          "critical": true,
+          "max_points": 2
+        },
+        {
+          "id": "A2",
+          "criterion": "Identity of the speaker validated as the actual applicant",
+          "probe": "Confirm full name, and that the person speaking is the applicant himself/herself (not a relative, DSA or agent). Cross-check the mobile number belongs to the applicant (CAM / Aadhaar-OTP mobile). Aap khud [name] bol rahe hain? Yeh mobile number aapka hi hai?",
+          "policy_ref": "PD Report §1 (Samagra/Aadhaar mobile check); Gate K2",
+          "critical": true,
+          "max_points": 2
+        },
+        {
+          "id": "A3",
+          "criterion": "Customer confirms having applied for the loan (application awareness)",
+          "probe": "'Aapne Prodigee Finance mein loan ke liye file lagayi hai?' — customer should know an application exists.",
+          "policy_ref": "Gate K2 / RF-1",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "A4",
+          "criterion": "Language comfort and audibility established",
+          "probe": "Speak in the customer's preferred language; confirm the customer can hear and understand.",
+          "policy_ref": "Call quality",
+          "critical": false,
+          "max_points": 1
+        },
+        {
+          "id": "A5",
+          "criterion": "Co-borrower(s) identified and covered",
+          "probe": "Establish who the co-borrowers are and speak with them on this call, or record that a separate co-borrower call will be made.",
+          "policy_ref": "Policy B.4 (min 1 borrower + 1 co-borrower; female mandatory)",
+          "critical": false,
+          "max_points": 1
+        }
+      ]
+    },
+    {
+      "id": "B",
+      "name": "Loan Request & Terms Awareness",
+      "max_points": 12,
+      "criteria": [
+        {
+          "id": "B1",
+          "criterion": "Loan amount stated by the customer and matches the CAM",
+          "probe": "'Kitne amount ki file lagayi hai?' — the customer must state the amount themselves; RCM must NOT lead with the figure.",
+          "policy_ref": "CAM Eligibility G22; Policy A.1 (Rs. 5L–25L)",
+          "critical": true,
+          "max_points": 3
+        },
+        {
+          "id": "B2",
+          "criterion": "Tenure and approximate EMI awareness confirmed",
+          "probe": "'Kitne saal ke liye loan chahiye? Andaazan EMI kitni banegi, pata hai?'",
+          "policy_ref": "CAM Eligibility G20/G24; Policy A.2 (24–72 months)",
+          "critical": false,
+          "max_points": 3
+        },
+        {
+          "id": "B3",
+          "criterion": "Rate of interest communicated / confirmed (fixed rate)",
+          "probe": "Confirm the customer knows the approximate RoI and that it is a FIXED rate for the full tenure.",
+          "policy_ref": "Policy A.3",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "B4",
+          "criterion": "Processing fee and upfront charges awareness",
+          "probe": "Confirm the customer knows processing fee (4% + GST), login fee and other charges will be deducted/collected.",
+          "policy_ref": "Policy A.4; KFS Calculator",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "B5",
+          "criterion": "Customer understands the property will be MORTGAGED",
+          "probe": "'Aapko pata hai ki is loan mein aapki property girvi (mortgage) rakhi jayegi aur original kagaz Prodigee ke paas jama honge?'",
+          "policy_ref": "Policy F.1; Gate K4",
+          "critical": true,
+          "max_points": 2
+        }
+      ]
+    },
+    {
+      "id": "C",
+      "name": "End Use Verification",
+      "max_points": 10,
+      "criteria": [
+        {
+          "id": "C1",
+          "criterion": "End use stated by the customer in their own words",
+          "probe": "'Loan ka paisa kis kaam mein lagayenge?' — open question; do not read out the declared end use first.",
+          "policy_ref": "Policy B.3; End-Use Declaration Letter",
+          "critical": true,
+          "max_points": 4
+        },
+        {
+          "id": "C2",
+          "criterion": "End use screened against restricted list",
+          "probe": "Probe enough detail to rule out: speculation, new/unrelated business, purchase of milch animals/buffaloes [V2.1], illegal activity.",
+          "policy_ref": "Policy B.3 restrictions",
+          "critical": true,
+          "max_points": 3
+        },
+        {
+          "id": "C3",
+          "criterion": "Utilisation plan probed (how much, where, when)",
+          "probe": "'Kitna paisa kahan lagega? Kab tak use karenge?' — break-up for mixed use (e.g. debt consolidation + working capital).",
+          "policy_ref": "Policy B.3",
+          "critical": false,
+          "max_points": 3
+        }
+      ]
+    },
+    {
+      "id": "D",
+      "name": "Income & Business Validation (vs BCM Assessment)",
+      "max_points": 20,
+      "criteria": [
+        {
+          "id": "D1",
+          "criterion": "Nature of main business/occupation established in detail",
+          "probe": "'Aap kya kaam karte hain? Kya bechte/banate hain? Kaise chalta hai kaam?'",
+          "policy_ref": "CAM Eligibility B4-F4; Policy Part M",
+          "critical": false,
+          "max_points": 3
+        },
+        {
+          "id": "D2",
+          "criterion": "Business vintage confirmed",
+          "probe": "'Yeh kaam kitne saal se kar rahe hain?'",
+          "policy_ref": "Policy B.9",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "D3",
+          "criterion": "Income quantum stated by customer and consistent with CAM",
+          "probe": "'Mahine ki kamai / bachat kitni ho jati hai? Din ki sale kitni hai?' — customer states figures first.",
+          "policy_ref": "CAM Eligibility B5:F5; PRAGATI model",
+          "critical": true,
+          "max_points": 5
+        },
+        {
+          "id": "D4",
+          "criterion": "All additional income sources in the CAM verified on call",
+          "probe": "Each additional income the CAM counts (dairy — number of in-milk animals & ownership; agri — acres owned & crops; rent — tenant & amount; tractor — commercial use; etc.) must be confirmed with its policy gate question.",
+          "policy_ref": "Policy C.4/C.7/C.8; CAM income rows",
+          "critical": false,
+          "max_points": 4
+        },
+        {
+          "id": "D5",
+          "criterion": "Business scale cross-checks asked (staff / customers / stock / capacity)",
+          "probe": "'Kitne log kaam karte hain? Roz kitne customer aate hain? Kitna maal rehta hai?' — triangulate the BCM's observed scale.",
+          "policy_ref": "PD Report §2",
+          "critical": false,
+          "max_points": 3
+        },
+        {
+          "id": "D6",
+          "criterion": "Household income contributors mapped",
+          "probe": "'Ghar mein aur kaun kamata hai? Kya karte hain, kitna kamate hain?'",
+          "policy_ref": "Policy B.4/C.1; CAM family details",
+          "critical": false,
+          "max_points": 3
+        }
+      ]
+    },
+    {
+      "id": "E",
+      "name": "Obligations & Liabilities Probing",
+      "max_points": 12,
+      "criteria": [
+        {
+          "id": "E1",
+          "criterion": "Existing loans enumerated by the customer and reconciled with CAM",
+          "probe": "'Abhi kaun-kaun se loan chal rahe hain? Kis company se, kitni EMI?' — customer lists; RCM reconciles against CAM obligation table.",
+          "policy_ref": "CAM Existing Loans A14-K17; Policy C.5",
+          "critical": true,
+          "max_points": 5
+        },
+        {
+          "id": "E2",
+          "criterion": "Specific probe for microfinance / group loans",
+          "probe": "'Koi samooh / group / bhishi / MFI loan chal raha hai? Aapki patni ke naam par?' — Policy requires the Credit Manager to specifically enumerate MFI lenders.",
+          "policy_ref": "Policy C.5.1 [V2.1]",
+          "critical": false,
+          "max_points": 3
+        },
+        {
+          "id": "E3",
+          "criterion": "Specific probe for KCC, cooperative society / PACS, gold and hand loans",
+          "probe": "'KCC limit hai? Society / sahakari samiti ka loan? Sona girvi rakha hai? Kisi se haath-udhaar liya hai?'",
+          "policy_ref": "Policy C.5",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "E4",
+          "criterion": "Repayment track / bounce history acknowledged",
+          "probe": "'Kisi loan mein EMI late ya bounce hui hai? Koi overdue hai?'",
+          "policy_ref": "Policy D.1/D.4",
+          "critical": false,
+          "max_points": 2
+        }
+      ]
+    },
+    {
+      "id": "F",
+      "name": "Family Structure & Co-Borrower Awareness",
+      "max_points": 8,
+      "criteria": [
+        {
+          "id": "F1",
+          "criterion": "Family size and members confirmed vs CAM",
+          "probe": "'Ghar mein kitne log hain? Kaun-kaun?'",
+          "policy_ref": "CAM family details; Policy C.2",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "F2",
+          "criterion": "Spouse / female co-borrower confirmed as aware and consenting",
+          "probe": "'Aapki patni/pati ko loan ke baare mein pata hai? Woh co-borrower ban rahi/raha hai — unse baat ho sakti hai?'",
+          "policy_ref": "Policy B.4; PD Report §4",
+          "critical": true,
+          "max_points": 3
+        },
+        {
+          "id": "F3",
+          "criterion": "Property-owner and legal-heir structure confirmed",
+          "probe": "'Property kiske naam par hai? (If ancestral) Bhai/behen/waris ka koi hissa hai? Sab loan mein shaamil hain ya NOC denge?'",
+          "policy_ref": "Policy B.4/B.4.1/B.4.2",
+          "critical": false,
+          "max_points": 3
+        }
+      ]
+    },
+    {
+      "id": "G",
+      "name": "Collateral Property Validation",
+      "max_points": 8,
+      "criteria": [
+        {
+          "id": "G1",
+          "criterion": "Property identified and ownership/acquisition confirmed",
+          "probe": "'Kaun si property girvi rakh rahe hain? Kahan hai? Kaise mili — kharidi thi ya purkhon ki hai? Kagaz kiske naam hain?'",
+          "policy_ref": "CAM B20-B30; Property Checklist",
+          "critical": false,
+          "max_points": 3
+        },
+        {
+          "id": "G2",
+          "criterion": "Occupancy and possession status confirmed",
+          "probe": "'Us property mein kaun rehta hai — aap khud, kirayedaar, ya koi aur?'",
+          "policy_ref": "PD Report §5; Policy F.3 LTV by occupancy",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "G3",
+          "criterion": "No-dispute and no-existing-mortgage confirmation taken",
+          "probe": "'Property par koi vivaad, court case, ya kisi aur bank ka loan/girvi to nahi hai?'",
+          "policy_ref": "Policy F.1 (first & exclusive charge); Part J.2",
+          "critical": true,
+          "max_points": 3
+        }
+      ]
+    },
+    {
+      "id": "H",
+      "name": "Repayment Capacity & Intent",
+      "max_points": 8,
+      "criteria": [
+        {
+          "id": "H1",
+          "criterion": "Customer explains HOW the EMI will be serviced",
+          "probe": "'EMI kis kamai se bharenge? Mahina kaisa bhi jaye, EMI kaise niklegi?'",
+          "policy_ref": "Policy C.2 (FOIR ≤60%, disposable ≥ ₹10,000)",
+          "critical": false,
+          "max_points": 3
+        },
+        {
+          "id": "H2",
+          "criterion": "Surplus / affordability sanity-check discussed",
+          "probe": "Walk the customer through income minus kharcha minus existing EMIs to confirm the new EMI fits.",
+          "policy_ref": "CAM Eligibility G18/G26",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "H3",
+          "criterion": "Repayment commitment and NACH awareness confirmed",
+          "probe": "'EMI har mahine [date] ko account se auto-debit (NACH) hogi — account mein paise rakhne honge. Manzoor hai?'",
+          "policy_ref": "Policy G.1 (eNACH before disbursement)",
+          "critical": false,
+          "max_points": 3
+        }
+      ]
+    },
+    {
+      "id": "I",
+      "name": "Mandatory Disclosures (Charges, Insurance, Grievance)",
+      "max_points": 8,
+      "criteria": [
+        {
+          "id": "I1",
+          "criterion": "Penal & bounce charges disclosed",
+          "probe": "Inform: penal charge on overdue EMI only (not compounded) and ₹1,000 + GST per NACH bounce.",
+          "policy_ref": "Policy A.5; KFS",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "I2",
+          "criterion": "Prepayment / foreclosure rules disclosed",
+          "probe": "Inform: 20% part-payment free per year (after 12 EMIs); foreclosure 4% up to half tenure, 2% after.",
+          "policy_ref": "Policy A.5",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "I3",
+          "criterion": "Mandatory insurance premiums disclosed",
+          "probe": "Inform: accidental/disability and hospi-cash insurance are part of the loan; premium deducted.",
+          "policy_ref": "Policy A.4; Part K (life insurance for highest earner)",
+          "critical": false,
+          "max_points": 2
+        },
+        {
+          "id": "I4",
+          "criterion": "KFS / total-cost honesty and grievance channel",
+          "probe": "Tell the customer they will receive a Key Fact Statement with the full cost (APR) before disbursement, and how to complain (branch/nodal officer).",
+          "policy_ref": "Policy I.1/I.2",
+          "critical": false,
+          "max_points": 2
+        }
+      ]
+    },
+    {
+      "id": "J",
+      "name": "Call Conduct & Professional Quality",
+      "max_points": 6,
+      "criteria": [
+        {
+          "id": "J1",
+          "criterion": "Audio quality and completeness of recording",
+          "probe": "Both voices clearly audible end-to-end; call not cut abruptly; duration adequate (12–20 min for standard case).",
+          "policy_ref": "Gate K1",
+          "critical": true,
+          "max_points": 2
+        },
+        {
+          "id": "J2",
+          "criterion": "Open, non-leading questioning technique",
+          "probe": "Material facts (amount, income, end use, obligations) elicited with OPEN questions; customer speaks first, RCM verifies.",
+          "policy_ref": "Gate K7 / RF-7",
+          "critical": true,
+          "max_points": 2
+        },
+        {
+          "id": "J3",
+          "criterion": "Courteous, structured and complete flow",
+          "probe": "Respectful tone, logical section order, proper closure summarising next steps.",
+          "policy_ref": "Fair Practices Code",
+          "critical": false,
+          "max_points": 2
+        }
+      ]
+    }
+  ],
+  "knockout_gates": [
+    {
+      "id": "K1",
+      "requirement": "Valid recording exists — audible both sides, materially complete, duration ≥ 10 minutes for a standard case (target 15 min).",
+      "linked_criteria": ["J1"]
+    },
+    {
+      "id": "K2",
+      "requirement": "The RCM spoke to the ACTUAL applicant (and not solely a relative, DSA, agent or impersonator).",
+      "linked_criteria": ["A2"]
+    },
+    {
+      "id": "K3",
+      "requirement": "Recording disclosure was made to the customer at the start of the call.",
+      "linked_criteria": ["A1"]
+    },
+    {
+      "id": "K4",
+      "requirement": "Customer clearly understands this is a LOAN AGAINST PROPERTY — property mortgaged, original title documents deposited.",
+      "linked_criteria": ["B5"]
+    },
+    {
+      "id": "K5",
+      "requirement": "Customer is aware of the loan amount applied (stated within ±10% of CAM amount without being fed the figure).",
+      "linked_criteria": ["B1"]
+    },
+    {
+      "id": "K6",
+      "requirement": "No restricted end use surfaced (speculation, new/unrelated business, purchase of milch animals/buffaloes, illegal activity).",
+      "linked_criteria": ["C2"]
+    },
+    {
+      "id": "K7",
+      "requirement": "No mis-selling on the call — no false waiver/subsidy/government-scheme promises, no misquoting of rate or charges, no coaching the customer's answers.",
+      "linked_criteria": ["J2"]
+    },
+    {
+      "id": "K8",
+      "requirement": "No negative-profile revelation left unescalated (PEP, negative industry/occupation per Part J.1, ST-property issue, notified-slum residence).",
+      "linked_criteria": []
+    },
+    {
+      "id": "K9",
+      "requirement": "Every red flag raised on the call is recorded with an escalation note (RCM cannot approve past an open red flag).",
+      "linked_criteria": []
+    }
+  ],
+  "red_flags": [
+    {
+      "code": "RF-1",
+      "trigger": "Customer unaware that a loan application exists, or does not know Prodigee Finance — possible DSA/agent fraud.",
+      "action": "STOP — refer to RCU & CCRO"
+    },
+    {
+      "code": "RF-2",
+      "trigger": "Loan amount stated by customer differs from CAM by more than ±10%.",
+      "action": "Reconcile with BCM; re-confirm before sanction"
+    },
+    {
+      "code": "RF-3",
+      "trigger": "End use stated on call conflicts with the End-Use Declaration / CAM.",
+      "action": "Fresh end-use declaration; CCRO note"
+    },
+    {
+      "code": "RF-4",
+      "trigger": "Customer-stated income deviates from CAM assessed income by more than ±20%.",
+      "action": "Return CAM to BCM for reassessment"
+    },
+    {
+      "code": "RF-5",
+      "trigger": "Customer discloses a loan/EMI not obligated in the CAM (incl. MFI, society, gold, hand loans).",
+      "action": "Re-run FOIR with the new obligation; CCRO approval if breached"
+    },
+    {
+      "code": "RF-6",
+      "trigger": "Property dispute, existing mortgage/charge, or third-party claim mentioned on call.",
+      "action": "STOP — refer Legal before any further processing"
+    },
+    {
+      "code": "RF-7",
+      "trigger": "Third party audibly prompting/coaching the customer's answers during the call.",
+      "action": "Treat responses as unreliable; re-conduct Audio PD"
+    },
+    {
+      "code": "RF-8",
+      "trigger": "Customer expects a different loan product (e.g. thinks it is unsecured/government scheme) or was promised waivers by field staff.",
+      "action": "Escalate as mis-selling; CCRO + re-consent"
+    },
+    {
+      "code": "RF-9",
+      "trigger": "Income arithmetic on call cannot support the EMI (fails FOIR common-sense check).",
+      "action": "Return to credit for FOIR re-check"
+    },
+    {
+      "code": "RF-10",
+      "trigger": "Customer reluctant/refuses on mortgage, NACH, insurance or any sanction condition.",
+      "action": "Hold sanction until resolved and documented"
+    }
+  ],
+  "score_bands": [
+    {
+      "min": 90,
+      "max": 100,
+      "band": "A",
+      "label": "Excellent",
+      "action": "Model call. Approve; use recording for training library."
+    },
+    {
+      "min": 75,
+      "max": 89,
+      "band": "B",
+      "label": "Pass",
+      "action": "Audio PD acceptable. Proceed to approval decision."
+    },
+    {
+      "min": 60,
+      "max": 74,
+      "band": "C",
+      "label": "Conditional",
+      "action": "Approval blocked until RCM completes a supplementary call covering the missed items."
+    },
+    {
+      "min": 0,
+      "max": 59,
+      "band": "D",
+      "label": "Fail",
+      "action": "Audio PD to be re-conducted in full by the RCM; score counts in RCM quality MIS."
+    }
+  ]
+}

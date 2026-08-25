@@ -1,0 +1,389 @@
+{
+  "version": "1.0",
+  "description": "Universal rubric supporting RCM, BCM, and BM call types with adaptive criteria",
+  
+  "call_types": {
+    "RCM_TELE_PD": {
+      "name": "RCM Telephone Personal Discussion",
+      "description": "Two-party phone call between RCM and Customer",
+      "speaker_count": 2,
+      "format": "dialogue",
+      "duration_requirement": "10-20 minutes",
+      "applicable_sections": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+    },
+    "BCM_PHYSICAL_PD": {
+      "name": "BCM Physical PD Self-Audio",
+      "description": "Single-party narration by BCM describing physical visits",
+      "speaker_count": 1,
+      "format": "narration",
+      "duration_requirement": "15-30 minutes",
+      "applicable_sections": ["A", "B", "C", "D", "E", "F", "G", "H"]
+    },
+    "BM_AUDIO_FI": {
+      "name": "BM Audio Field Investigation",
+      "description": "Single-party narration by BM describing field verification",
+      "speaker_count": 1,
+      "format": "narration",
+      "duration_requirement": "10-20 minutes",
+      "applicable_sections": ["A", "B", "C", "D", "E", "F", "G"]
+    }
+  },
+  
+  "detection_keywords": {
+    "RCM_TELE_PD": [
+      "Customer:",
+      "RCM:",
+      "Aapne loan apply kiya",
+      "Kitne amount ki file",
+      "recording par hai",
+      "two-way dialogue",
+      "customer confirms",
+      "RCM asks"
+    ],
+    "BCM_PHYSICAL_PD": [
+      "I visited",
+      "I observed",
+      "The borrower showed",
+      "Business premises",
+      "photographed",
+      "neighbor enquiry",
+      "residence visited",
+      "BCM narration"
+    ],
+    "BM_AUDIO_FI": [
+      "I verified",
+      "Documents checked",
+      "Property inspection",
+      "Field investigation",
+      "site visit",
+      "verification completed"
+    ]
+  },
+  
+  "universal_criteria": {
+    "A1": {
+      "section": "A",
+      "max_points": 2,
+      "critical": {
+        "RCM_TELE_PD": true,
+        "BCM_PHYSICAL_PD": false,
+        "BM_AUDIO_FI": false
+      },
+      "versions": {
+        "RCM_TELE_PD": {
+          "criterion": "Recording disclosure made at the start of the call",
+          "probe": "Inform the customer the call is being recorded for loan verification. / 'Yeh call recording par hai, loan verification ke liye.'",
+          "what_to_look_for": "RCM explicitly tells customer the call is being recorded at the beginning"
+        },
+        "BCM_PHYSICAL_PD": {
+          "criterion": "Case identified on record",
+          "probe": "Application ID, customer name, village/town, product, loan amount applied — stated at the start. Confirm pre-visit preparation: CRIF/CIBIL bureau report reviewed.",
+          "what_to_look_for": "BCM states application ID, customer name, loan amount at the start of narration"
+        },
+        "BM_AUDIO_FI": {
+          "criterion": "Visit identification stated",
+          "probe": "Date, location, purpose of field investigation stated at the start",
+          "what_to_look_for": "BM states date, location, and purpose of visit"
+        }
+      }
+    },
+    "A2": {
+      "section": "A",
+      "max_points": 2,
+      "critical": {
+        "RCM_TELE_PD": true,
+        "BCM_PHYSICAL_PD": true,
+        "BM_AUDIO_FI": true
+      },
+      "versions": {
+        "RCM_TELE_PD": {
+          "criterion": "Identity validated — RCM is speaking to the MAIN BORROWER himself/herself",
+          "probe": "Confirm full name, and that the speaker is the applicant (not relative, DSA, agent). Cross-check mobile number. 'Aap khud [name] bol rahe hain?'",
+          "what_to_look_for": "Customer confirms their own identity and that the phone number belongs to them"
+        },
+        "BCM_PHYSICAL_PD": {
+          "criterion": "All visits confirmed — when and whom",
+          "probe": "Date/time of each visit (business, residence, collateral), who was met at each, who accompanied. Borrower met personally at business.",
+          "what_to_look_for": "BCM narrates dates/times of visits, who was present, confirms meeting borrower"
+        },
+        "BM_AUDIO_FI": {
+          "criterion": "Verification scope confirmed",
+          "probe": "What was verified (documents, property, business), who was present",
+          "what_to_look_for": "BM states what was verified and who was present during verification"
+        }
+      }
+    },
+    "A3": {
+      "section": "A",
+      "max_points": 2,
+      "critical": {
+        "RCM_TELE_PD": false,
+        "BCM_PHYSICAL_PD": false,
+        "BM_AUDIO_FI": false
+      },
+      "versions": {
+        "RCM_TELE_PD": {
+          "criterion": "Customer confirms having applied for the loan (application awareness)",
+          "probe": "'Aapne Prodigee Finance mein loan ke liye file lagayi hai?' — customer should know an application exists.",
+          "what_to_look_for": "Customer voluntarily confirms they applied for a loan with Prodigee"
+        },
+        "BCM_PHYSICAL_PD": {
+          "criterion": "Photo/document capture confirmed",
+          "probe": "Geo-tagged photos — business premises, QR codes, signboard, stock, bills, neighbor signboards, residence photos — confirmed taken & uploaded.",
+          "what_to_look_for": "BCM confirms photos were taken and uploaded during visits"
+        },
+        "BM_AUDIO_FI": {
+          "criterion": "Documentation capture confirmed",
+          "probe": "Photos, document copies, verification records captured",
+          "what_to_look_for": "BM confirms documentation was captured during field investigation"
+        }
+      }
+    },
+    "A4": {
+      "section": "A",
+      "max_points": 1,
+      "critical": {
+        "RCM_TELE_PD": false,
+        "BCM_PHYSICAL_PD": true,
+        "BM_AUDIO_FI": true
+      },
+      "versions": {
+        "RCM_TELE_PD": {
+          "criterion": "Language comfort and audibility established",
+          "probe": "Speak in the customer's preferred language; confirm the customer can hear and understand.",
+          "what_to_look_for": "Both parties communicate clearly in preferred language, no comprehension issues"
+        },
+        "BCM_PHYSICAL_PD": {
+          "criterion": "Same-day recording, correct duration",
+          "probe": "Recorded same day after all visits; 15–30 minutes total.",
+          "what_to_look_for": "BCM confirms recording made same day; check duration is 15-30 minutes"
+        },
+        "BM_AUDIO_FI": {
+          "criterion": "Same-day recording confirmed",
+          "probe": "Recording made on the day of field visit",
+          "what_to_look_for": "BM confirms recording made on day of visit"
+        }
+      }
+    },
+    "A5": {
+      "section": "A",
+      "max_points": 1,
+      "critical": {
+        "RCM_TELE_PD": false,
+        "BCM_PHYSICAL_PD": false,
+        "BM_AUDIO_FI": false
+      },
+      "versions": {
+        "RCM_TELE_PD": {
+          "criterion": "Co-borrower(s) identified and covered",
+          "probe": "Establish who the co-borrowers are and speak with them on this call, or record that a separate co-borrower call will be made.",
+          "what_to_look_for": "Co-borrowers identified; either spoken to on call or separate call logged"
+        },
+        "BCM_PHYSICAL_PD": {
+          "criterion": "N/A for BCM",
+          "probe": "Not applicable to BCM narrations",
+          "what_to_look_for": "Mark as N/A"
+        },
+        "BM_AUDIO_FI": {
+          "criterion": "N/A for BM",
+          "probe": "Not applicable to BM field investigations",
+          "what_to_look_for": "Mark as N/A"
+        }
+      }
+    }
+  },
+  
+  "sections": {
+    "A": {
+      "name_RCM": "Call Opening, Identity & Consent",
+      "name_BCM": "Recording Setup & Visit Identification",
+      "name_BM": "Investigation Setup & Identification",
+      "max_points": 8
+    },
+    "B": {
+      "name_RCM": "Loan Request & Terms Awareness",
+      "name_BCM": "Business Verification (every income stream)",
+      "name_BM": "Business/Income Verification",
+      "max_points_RCM": 12,
+      "max_points_BCM": 24,
+      "max_points_BM": 15
+    },
+    "C": {
+      "name_RCM": "End Use Verification",
+      "name_BCM": "Agricultural Income Verification",
+      "name_BM": "End Use & Purpose Verification",
+      "max_points": 10
+    },
+    "D": {
+      "name_RCM": "Income & Business Validation (vs BCM Assessment)",
+      "name_BCM": "Obligations & Family Expenses",
+      "name_BM": "Obligations Verification",
+      "max_points_RCM": 20,
+      "max_points_BCM": 12,
+      "max_points_BM": 12
+    },
+    "E": {
+      "name_RCM": "Obligations & Liabilities Probing",
+      "name_BCM": "Residence, Family & Co-Borrower",
+      "name_BM": "Family & Co-Borrower Verification",
+      "max_points_RCM": 12,
+      "max_points_BCM": 16,
+      "max_points_BM": 10
+    },
+    "F": {
+      "name_RCM": "Family Structure & Co-Borrower Awareness",
+      "name_BCM": "Collateral Verification",
+      "name_BM": "Collateral/Property Verification",
+      "max_points_RCM": 8,
+      "max_points_BCM": 14,
+      "max_points_BM": 12
+    },
+    "G": {
+      "name_RCM": "Collateral Property Validation",
+      "name_BCM": "End Use & Overall Assessment",
+      "name_BM": "Overall Assessment & Recommendation",
+      "max_points": 8
+    },
+    "H": {
+      "name_RCM": "Repayment Capacity & Intent",
+      "name_BCM": "Narration Quality",
+      "name_BM": "Recording Quality",
+      "max_points_RCM": 8,
+      "max_points_BCM": 6,
+      "max_points_BM": 6
+    },
+    "I": {
+      "name_RCM": "Mandatory Disclosures (Charges, Insurance, Grievance)",
+      "name_BCM": "N/A",
+      "name_BM": "N/A",
+      "max_points": 8,
+      "applicable": ["RCM_TELE_PD"]
+    },
+    "J": {
+      "name_RCM": "Call Conduct & Professional Quality",
+      "name_BCM": "N/A",
+      "name_BM": "N/A",
+      "max_points": 6,
+      "applicable": ["RCM_TELE_PD"]
+    }
+  },
+  
+  "knockout_gates": {
+    "RCM_TELE_PD": [
+      {
+        "id": "K1",
+        "requirement": "Valid recording exists — audible both sides, materially complete, duration ≥ 10 minutes",
+        "linked_criteria": ["J1"]
+      },
+      {
+        "id": "K2",
+        "requirement": "The RCM spoke to the ACTUAL applicant (not relative, DSA, agent)",
+        "linked_criteria": ["A2"]
+      },
+      {
+        "id": "K3",
+        "requirement": "Recording disclosure was made to the customer at the start of the call",
+        "linked_criteria": ["A1"]
+      },
+      {
+        "id": "K4",
+        "requirement": "Customer clearly understands this is a LOAN AGAINST PROPERTY — property mortgaged, original title documents deposited",
+        "linked_criteria": ["B5"]
+      },
+      {
+        "id": "K5",
+        "requirement": "Customer is aware of the loan amount applied (stated within ±10% of CAM amount)",
+        "linked_criteria": ["B1"]
+      },
+      {
+        "id": "K6",
+        "requirement": "No restricted end use surfaced (speculation, new/unrelated business, milch animals, illegal activity)",
+        "linked_criteria": ["C2"]
+      },
+      {
+        "id": "K7",
+        "requirement": "No mis-selling — no false promises, no misquoting, no coaching answers",
+        "linked_criteria": ["J2"]
+      },
+      {
+        "id": "K8",
+        "requirement": "No negative-profile revelation left unescalated (PEP, negative industry, ST-property)",
+        "linked_criteria": []
+      },
+      {
+        "id": "K9",
+        "requirement": "Every red flag raised is recorded with escalation note",
+        "linked_criteria": []
+      }
+    ],
+    "BCM_PHYSICAL_PD": [
+      {
+        "id": "K1",
+        "requirement": "Valid recording — ≥ 15 minutes, audible, recorded SAME DAY after all visits",
+        "linked_criteria": ["A4", "H2"]
+      },
+      {
+        "id": "K2",
+        "requirement": "BCM personally met the MAIN BORROWER at business premises",
+        "linked_criteria": ["B2"]
+      },
+      {
+        "id": "K3",
+        "requirement": "EVERY declared income business/site physically visited",
+        "linked_criteria": ["B1"]
+      },
+      {
+        "id": "K4",
+        "requirement": "Residence AND collateral visited; family and co-borrower spoken to",
+        "linked_criteria": ["E1", "E2"]
+      },
+      {
+        "id": "K5",
+        "requirement": "Neighbor verification done — at least 2 business + 2 residence neighbors",
+        "linked_criteria": ["B5", "E3"]
+      },
+      {
+        "id": "K6",
+        "requirement": "No staged/fake setup left unreported",
+        "linked_criteria": ["B6"]
+      },
+      {
+        "id": "K7",
+        "requirement": "Collateral papers physically seen — original title documents sighted",
+        "linked_criteria": ["F2"]
+      },
+      {
+        "id": "K8",
+        "requirement": "Narration consistent with geo-tagged photos uploaded on PRAGATI",
+        "linked_criteria": ["A3"]
+      }
+    ],
+    "BM_AUDIO_FI": [
+      {
+        "id": "K1",
+        "requirement": "Valid recording — audible, complete, recorded same day as field visit",
+        "linked_criteria": ["A4", "H2"]
+      },
+      {
+        "id": "K2",
+        "requirement": "BM personally met the borrower and verified identity",
+        "linked_criteria": ["A2"]
+      },
+      {
+        "id": "K3",
+        "requirement": "Property/collateral physically inspected and documented",
+        "linked_criteria": ["F1"]
+      },
+      {
+        "id": "K4",
+        "requirement": "Business/income source verified on ground",
+        "linked_criteria": ["B1"]
+      },
+      {
+        "id": "K5",
+        "requirement": "No discrepancies between documents and ground reality left unreported",
+        "linked_criteria": ["G2"]
+      }
+    ]
+  }
+}
