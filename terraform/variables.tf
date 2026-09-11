@@ -22,6 +22,6 @@ variable "tags" {
   default = {
     Project     = "Audio PD Scoring"
     ManagedBy   = "Terraform"
-    Owner       = "Prodigee Finance"
+    Owner       = "Himanshu Saini"
   }
 }

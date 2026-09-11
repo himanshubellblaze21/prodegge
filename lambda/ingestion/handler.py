@@ -1,11 +1,20 @@
 import json
 import boto3
+from botocore.config import Config
 import os
 import uuid
 from datetime import datetime
 
 # Initialize AWS clients
-s3_client = boto3.client('s3')
+# MUST use regional endpoint for presigned URLs — global endpoint causes 307
+# redirects that browsers block due to missing CORS headers on the redirect.
+AWS_REGION = os.environ.get('AWS_REGION', 'ap-south-1')
+s3_client = boto3.client(
+    's3',
+    region_name=AWS_REGION,
+    endpoint_url=f'https://s3.{AWS_REGION}.amazonaws.com',
+    config=Config(signature_version='s3v4')
+)
 dynamodb = boto3.resource('dynamodb')
 lambda_client = boto3.client('lambda')
 

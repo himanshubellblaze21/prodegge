@@ -243,7 +243,7 @@ export default function HistoryPage() {
             </TableHead>
             <TableBody>
               {filteredEvaluations.map((evaluation) => (
-                <TableRow key={evaluation.evaluation_id} hover>
+                <TableRow key={`${evaluation.evaluation_id}|${evaluation.created_at}`} hover>
                   <TableCell>
                     <Typography variant="body2" fontFamily="monospace">
                       {evaluation.evaluation_id}

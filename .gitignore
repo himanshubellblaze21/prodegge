@@ -6,6 +6,8 @@
 **/tfplan
 **/backend.hcl
 **/.terraform.tfstate.lock.info
+# Terraform binary (downloaded locally, not committed)
+terraform/terraform.exe
 
 # Keep the packages dir (Terraform writes zips here at apply time)
 !terraform/packages/

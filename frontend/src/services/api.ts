@@ -44,10 +44,10 @@ export async function uploadRecording(
     }
 
     // Step 2: Upload file directly to S3
+    // Note: Do NOT set Content-Type header — the presigned URL is signed
+    // with only 'host' in SignedHeaders. Adding extra headers causes
+    // SignatureDoesNotMatch errors from S3.
     await axios.put(upload_url, file, {
-      headers: {
-        'Content-Type': file.type,
-      },
       onUploadProgress: (progressEvent) => {
         if (progressEvent.total) {
           const progress = Math.round(

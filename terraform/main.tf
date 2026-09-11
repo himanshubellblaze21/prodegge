@@ -277,7 +277,7 @@ resource "aws_lambda_function" "evaluation" {
       TRANSCRIPTS_BUCKET        = aws_s3_bucket.transcripts.id
       REPORTS_BUCKET            = aws_s3_bucket.reports.id
       DYNAMODB_TABLE            = aws_dynamodb_table.evaluations.id
-      BEDROCK_MODEL_ID          = "apac.anthropic.claude-3-5-sonnet-20240620-v1:0"
+      BEDROCK_MODEL_ID          = "apac.amazon.nova-pro-v1:0"
       EXCEL_GENERATOR_LAMBDA_ARN = aws_lambda_function.excel_generator.arn
     }
   }

@@ -140,18 +140,15 @@ def compute_derived(evaluation_data: Dict[str, Any]) -> Dict[str, Any]:
         failures = {f.get('flag') for f in evaluation_data.get('scoring', {}).get('critical_failures', [])}
         gate_results = {f'K{i}': ('FAIL' if f'K{i}' in failures else 'PASS') for i in range(1, 9)}
 
-    # ── per-criterion points ──────────────────────────────────────────────
+    # ── per-criterion points — always computed deterministically, never from AI ──
     criterion_points = {}
     for cid, max_pts in CRITERIA_MAX_PTS.items():
         c = criteria_by_id.get(cid, {})
         coverage = c.get('coverage', 'None')
         if coverage == 'N/A':
-            criterion_points[cid] = None  # excluded
+            criterion_points[cid] = None  # excluded from scoring
         else:
-            pts = c.get('points_scored')
-            if pts is None:
-                pts = pts_for_coverage(coverage, max_pts)
-            criterion_points[cid] = float(pts)
+            criterion_points[cid] = float(pts_for_coverage(coverage, max_pts))
 
     # ── section subtotals ─────────────────────────────────────────────────
     sections = {}
@@ -176,10 +173,26 @@ def compute_derived(evaluation_data: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── knockout, grade, verdict (matches template formulas exactly) ──────
     any_fail = any(v == 'FAIL' for v in gate_results.values())
+    any_not_tested = any(v == 'NOT_TESTED' for v in gate_results.values())
     if any_fail:
         knockout_status = 'FAILED — INVALID'
         grade_band = 'D — Fail'
         verdict = 'INVALID — RE-RECORD NARRATION'
+    elif any_not_tested:
+        knockout_status = 'CONDITIONAL — K8 NOT TESTED (uploads not supplied)'
+        # Still grade on score, but note the untested gate
+        if total_score >= 90:
+            grade_band = 'A — Excellent'
+            verdict = 'FI ACCEPTED — pending K8 verification'
+        elif total_score >= 75:
+            grade_band = 'B — Pass'
+            verdict = 'FI ACCEPTED — pending K8 verification'
+        elif total_score >= 60:
+            grade_band = 'C — Conditional'
+            verdict = 'SUPPLEMENTARY CALL before CPA'
+        else:
+            grade_band = 'D — Fail'
+            verdict = 'RE-CONDUCT FI'
     elif total_score >= 90:
         knockout_status = 'ALL PASSED'
         grade_band = 'A — Excellent'
@@ -203,23 +216,32 @@ def compute_derived(evaluation_data: Dict[str, Any]) -> Dict[str, Any]:
     ob_sum = cs.get('obligations_summary', {})
     fam_sum = cs.get('family_summary', {})
 
-    total_income = inc_sum.get('total_assessed') or 0
-    monthly_expense = fam_sum.get('monthly_expense') or 0
-    total_emi = ob_sum.get('total_emi') or 0
+    def safe_num(val):
+        """Convert val to float safely — returns 0 for None, strings, or non-numeric."""
+        if val is None:
+            return 0
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0
 
-    # Also sum from income_streams if total_assessed is null
+    total_income = safe_num(inc_sum.get('total_assessed'))
+    monthly_expense = safe_num(fam_sum.get('monthly_expense'))
+    total_emi = safe_num(ob_sum.get('total_emi'))
+
+    # Also sum from income_streams if total_assessed is zero/null
     if not total_income:
         streams = cs.get('income_streams', [])
         total_income = sum(
-            (s.get('assessed_monthly') or s.get('stated_monthly') or 0)
+            safe_num(s.get('assessed_monthly') or s.get('stated_monthly'))
             for s in streams if isinstance(s, dict)
         )
 
-    # Also sum from obligations if total_emi is null
+    # Also sum from obligations if total_emi is zero/null
     if not total_emi:
         obs = cs.get('obligations', [])
         total_emi = sum(
-            (o.get('emi_monthly') or 0)
+            safe_num(o.get('emi_monthly'))
             for o in obs if isinstance(o, dict)
         )
 
@@ -314,7 +336,8 @@ def fill_scorecard(ws, evaluation_data: Dict[str, Any], derived: Dict[str, Any])
     for cid, row in criteria_rows.items():
         c = criteria_by_id.get(cid, {})
         coverage = c.get('coverage', 'None')
-        evidence = c.get('evidence', '')
+        # Prefer gate_evidence for critical criteria, fall back to evidence
+        evidence = c.get('gate_evidence') or c.get('evidence', '')
 
         # G: Coverage
         safe_set(ws, f'G{row}', coverage)
@@ -332,13 +355,26 @@ def fill_scorecard(ws, evaluation_data: Dict[str, Any], derived: Dict[str, Any])
 
     print(f"Filled {filled} criteria (G=coverage, H=computed points, I=evidence)")
 
-    # ── Gates E63:E70 ─────────────────────────────────────────────────────
+    # ── Gates E63:E70 — status + evidence text ────────────────────────────
+    # Build a lookup of gate evidence from critical_failures
+    critical_failures = evaluation_data.get('scoring', {}).get('critical_failures', [])
+    gate_evidence_map = {}
+    for cf in critical_failures:
+        gid = cf.get('flag')
+        ev = cf.get('evidence', '')
+        if gid and ev:
+            gate_evidence_map[gid] = ev[:200]
+
     gate_rows = find_gate_rows(ws)
     for gid, status in derived['gate_results'].items():
         row = gate_rows.get(gid)
         if row:
             safe_set(ws, f'E{row}', status)
-    print(f"Filled {len(gate_rows)} gates")
+            # Write gate evidence in the adjacent column F (if it exists)
+            evidence_text = gate_evidence_map.get(gid, '')
+            if evidence_text:
+                safe_set(ws, f'F{row}', evidence_text)
+    print(f"Filled {len(gate_rows)} gates with status and evidence")
 
     # ── Section subtotals rows 52-59 (replace formulas with values) ───────
     section_data_rows = {
@@ -698,7 +734,24 @@ def lambda_handler(event, context):
         template_bytes = tmpl['Body'].read()
 
         # Pre-compute all derived values
+        # Use scores already calculated by evaluation Lambda where available,
+        # only recompute what is needed for Excel filling (section subtotals, gap items etc.)
         derived = compute_derived(evaluation_data)
+        
+        # Override total_score/grade_band/verdict with what evaluation Lambda stored
+        # to keep Excel consistent with DynamoDB and history page
+        stored_scoring = evaluation_data.get('scoring', {})
+        if stored_scoring.get('total_score') is not None:
+            stored_score = float(stored_scoring['total_score'])
+            derived['total_score'] = stored_score
+            derived['points_to_90'] = max(0, round(90 - stored_score, 1))
+        if stored_scoring.get('grade_band'):
+            derived['grade_band'] = stored_scoring['grade_band']
+        if stored_scoring.get('verdict'):
+            derived['verdict'] = stored_scoring['verdict']
+        if stored_scoring.get('gate_results'):
+            derived['gate_results'] = stored_scoring['gate_results']
+        
         print(f"Derived: score={derived['total_score']} | {derived['grade_band']} | gaps={len(derived['gap_items'])}")
 
         # Load workbook
@@ -728,12 +781,18 @@ def lambda_handler(event, context):
         if created_at:
             table.update_item(
                 Key={'evaluation_id': evaluation_id, 'created_at': created_at},
-                UpdateExpression='SET excel_s3_key = :k, #status = :s, completed_at = :t',
+                UpdateExpression='SET excel_s3_key = :k, #status = :s, completed_at = :t, total_score = :sc, grade_band = :gb, verdict = :v',
                 ExpressionAttributeNames={'#status': 'status'},
                 ExpressionAttributeValues={
-                    ':k': excel_key, ':s': 'COMPLETED', ':t': datetime.utcnow().isoformat()
+                    ':k': excel_key,
+                    ':s': 'COMPLETED',
+                    ':t': datetime.utcnow().isoformat(),
+                    ':sc': Decimal(str(derived['total_score'])),
+                    ':gb': derived['grade_band'],
+                    ':v': derived['verdict'],
                 }
             )
+            print(f"DynamoDB synced: score={derived['total_score']} | {derived['grade_band']}")
 
         return {
             'statusCode': 200,

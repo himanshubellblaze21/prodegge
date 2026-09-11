@@ -1,5 +1,6 @@
 import json
 import boto3
+from botocore.config import Config
 import os
 from decimal import Decimal
 
@@ -11,7 +12,15 @@ class DecimalEncoder(json.JSONEncoder):
         return super(DecimalEncoder, self).default(obj)
 
 # Initialize AWS clients
-s3_client = boto3.client('s3')
+# MUST use regional endpoint + s3v4 for presigned URLs — global endpoint
+# causes 307 redirects that browsers block due to missing CORS headers.
+AWS_REGION = os.environ.get('AWS_REGION', 'ap-south-1')
+s3_client = boto3.client(
+    's3',
+    region_name=AWS_REGION,
+    endpoint_url=f'https://s3.{AWS_REGION}.amazonaws.com',
+    config=Config(signature_version='s3v4')
+)
 dynamodb = boto3.resource('dynamodb')
 lambda_client = boto3.client('lambda')
 
@@ -20,6 +29,7 @@ TRANSCRIPTS_BUCKET = os.environ['TRANSCRIPTS_BUCKET']
 REPORTS_BUCKET = os.environ['REPORTS_BUCKET']
 RECORDINGS_BUCKET = os.environ.get('RECORDINGS_BUCKET', 'audio-pd-recordings-dev')
 DYNAMODB_TABLE = os.environ['DYNAMODB_TABLE']
+TRANSCRIPTION_LAMBDA_ARN = os.environ.get('TRANSCRIPTION_LAMBDA_ARN', '')
 EVALUATION_LAMBDA_NAME = os.environ.get('EVALUATION_LAMBDA_NAME', '')
 
 
@@ -530,6 +540,12 @@ def list_evaluations(event, context):
         
         result = table.scan(**scan_kwargs)
         items = result.get('Items', [])
+        
+        # Handle DynamoDB pagination — scan may not return all items in one call
+        while 'LastEvaluatedKey' in result:
+            scan_kwargs['ExclusiveStartKey'] = result['LastEvaluatedKey']
+            result = table.scan(**scan_kwargs)
+            items.extend(result.get('Items', []))
         
         # Sort by created_at descending
         items.sort(key=lambda x: x.get('created_at', ''), reverse=True)

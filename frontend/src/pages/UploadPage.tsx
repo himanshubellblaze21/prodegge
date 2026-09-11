@@ -84,8 +84,8 @@ export default function UploadPage() {
         file,
         {
           applicationId: `APP-${shortHash}`,
-          customerName: 'Customer', // Will be extracted from transcript
-          callType: 'RCM_AUDIO_PD'
+          customerName: 'Customer',
+          callType: 'AUTO_DETECT',
         },
         (progress) => {
           setProgress(progress)

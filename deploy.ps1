@@ -75,17 +75,17 @@ Write-Host "[3/5] Running Terraform..." -ForegroundColor Yellow
 Push-Location terraform
 
 Write-Host "      terraform init..." -ForegroundColor Gray
-terraform init -upgrade
+.\terraform.exe init -upgrade
 if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "ERROR: terraform init failed." -ForegroundColor Red; exit 1 }
 
 Write-Host "      terraform apply..." -ForegroundColor Gray
-terraform apply -auto-approve `
+.\terraform.exe apply -auto-approve `
     -var="environment=$Environment" `
     -var="aws_region=$Region"
 if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "ERROR: terraform apply failed." -ForegroundColor Red; exit 1 }
 
 # Capture outputs
-$API_ENDPOINT = terraform output -raw api_endpoint
+$API_ENDPOINT = .\terraform.exe output -raw api_endpoint
 Pop-Location
 
 Write-Host "      Infrastructure deployed" -ForegroundColor Green
@@ -109,7 +109,7 @@ Write-Host ""
 # ── Step 5: Build frontend ─────────────────────────────────────────────────
 Write-Host "[5/5] Building frontend..." -ForegroundColor Yellow
 
-Push-Location frontend
+Push-Location frontend > $null
 npm install --silent
 if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "ERROR: npm install failed." -ForegroundColor Red; exit 1 }
 
@@ -118,16 +118,24 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "ERROR: npm run build failed
 
 Pop-Location
 Write-Host "      Frontend built → frontend/dist/" -ForegroundColor Green
+
+# Upload to S3
+$FRONTEND_BUCKET = Push-Location terraform > $null; .\terraform.exe output -raw frontend_bucket; Pop-Location > $null
+Write-Host "      Uploading frontend to s3://$FRONTEND_BUCKET..." -ForegroundColor Gray
+aws s3 sync frontend/dist/ s3://$FRONTEND_BUCKET --delete
+Write-Host "      Frontend deployed to S3" -ForegroundColor Green
 Write-Host ""
 
 # ── Done ───────────────────────────────────────────────────────────────────
+$FRONTEND_URL = Push-Location terraform > $null; .\terraform.exe output -raw frontend_url; Pop-Location > $null
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host " Deployment Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host " API Endpoint : $API_ENDPOINT" -ForegroundColor White
-Write-Host " Frontend     : frontend/dist/ (serve or upload to S3/CloudFront)" -ForegroundColor White
+Write-Host " API Endpoint  : $API_ENDPOINT" -ForegroundColor White
+Write-Host " Frontend URL  : $FRONTEND_URL" -ForegroundColor White
 Write-Host ""
 Write-Host " IMPORTANT: Enable Bedrock model access manually if first deploy:" -ForegroundColor Yellow
-Write-Host "   AWS Console → Bedrock → Model access → Enable Claude 3.5 Sonnet" -ForegroundColor Yellow
+Write-Host "   AWS Console → Bedrock → Model access → Enable Nova Pro" -ForegroundColor Yellow
 Write-Host ""

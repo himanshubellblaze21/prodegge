@@ -146,7 +146,7 @@ def lambda_handler(event, context):
                     }
                 )
                 
-                # Invoke evaluation Lambda
+                # Get audio duration from Transcribe job metadata
                 lambda_client = boto3.client('lambda')
                 
                 # Extract application_id from recording_key
@@ -164,6 +164,21 @@ def lambda_handler(event, context):
                 # Get call_type from event or default
                 call_type = event.get('call_type', 'RCM_AUDIO_PD')
                 
+                # Get audio duration from Transcribe job metadata
+                audio_duration_seconds = None
+                try:
+                    media_duration = job.get('MediaSampleRateHertz')  # not duration
+                    # Transcribe stores duration in the transcript output
+                    if 'results' in transcript_data:
+                        items = transcript_data['results'].get('items', [])
+                        pronunciation_items = [i for i in items if i.get('type') == 'pronunciation']
+                        if pronunciation_items:
+                            last_item = pronunciation_items[-1]
+                            audio_duration_seconds = int(float(last_item.get('end_time', 0))) + 1
+                            print(f"Audio duration from transcript: {audio_duration_seconds}s")
+                except Exception as dur_err:
+                    print(f"Could not compute duration: {dur_err}")
+
                 evaluation_payload = {
                     'evaluation_id': evaluation_id,
                     'transcript_s3_key': transcript_key,
@@ -171,7 +186,8 @@ def lambda_handler(event, context):
                     'created_at': created_at,
                     'application_id': application_id,
                     'call_type': call_type,
-                    'language_code': language_code
+                    'language_code': language_code,
+                    'audio_duration_seconds': audio_duration_seconds,
                 }
                 
                 print(f"Invoking evaluation Lambda with payload: {json.dumps(evaluation_payload)}")

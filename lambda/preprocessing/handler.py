@@ -66,12 +66,29 @@ def lambda_handler(event, context):
                 print(f"DynamoDB scan returned {len(response.get('Items', []))} items")
                 
                 if not response.get('Items'):
-                    print(f"ERROR: No DynamoDB record found for {evaluation_id}")
-                    print(f"This might be a timing issue - record may not be written yet")
-                    # Continue processing anyway - we can work without DynamoDB for now
-                    # Use a default created_at
-                    created_at = datetime.utcnow().isoformat()
-                    print(f"Using current timestamp as created_at: {created_at}")
+                    # Race condition: S3 event fired before ingestion wrote the DynamoDB record.
+                    # Retry up to 5 times with 2-second intervals before giving up.
+                    print(f"DynamoDB record not found for {evaluation_id} — retrying...")
+                    import time
+                    found = False
+                    for attempt in range(1, 6):
+                        time.sleep(2)
+                        retry = table.scan(
+                            FilterExpression='evaluation_id = :eval_id',
+                            ExpressionAttributeValues={':eval_id': evaluation_id},
+                            Limit=10
+                        )
+                        if retry.get('Items'):
+                            item = retry['Items'][0]
+                            created_at = item['created_at']
+                            print(f"Found DynamoDB record on retry {attempt}: created_at={created_at}")
+                            found = True
+                            break
+                        print(f"Retry {attempt}: still not found")
+                    
+                    if not found:
+                        print(f"FATAL: DynamoDB record for {evaluation_id} not found after 5 retries. Skipping.")
+                        continue  # Skip this record — do not invent a created_at
                 else:
                     item = response['Items'][0]
                     created_at = item['created_at']
