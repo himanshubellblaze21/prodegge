@@ -9,7 +9,8 @@
 # Terraform binary (downloaded locally, not committed)
 terraform/terraform.exe
 
-# Keep the packages dir (Terraform writes zips here at apply time)
+# Keep the packages dir (Terraform writes zips here at apply time), not the zips
+terraform/packages/*.zip
 !terraform/packages/
 !terraform/packages/.gitkeep
 
@@ -54,6 +55,7 @@ frontend/build/
 *~
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # ── Environment / Secrets ────────────────────────────────────────────────────
 # .env is gitignored — use .env.example as the template
@@ -70,3 +72,16 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# Local scoring output (tests/score_local.py)
+tests/output/
+
+# Score snapshot written by tests/reprocess_all.py (contains evaluation data)
+reprocess_snapshot.json
+
+# ── Customer data — never commit ────────────────────────────────────────────
+# Real customer recordings, transcripts and marked-up scorecards. Keep them on
+# the machines that need them (tests/client_agreement_check.py reads
+# Prodigee_new_template/), never in the repository.
+sample-evaluations/
+Prodigee_new_template/

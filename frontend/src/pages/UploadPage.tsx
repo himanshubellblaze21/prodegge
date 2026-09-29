@@ -1,350 +1,416 @@
-import { useState, useRef } from 'react'
+import { useRef, useState, DragEvent, ReactNode } from 'react'
 import {
-  Box,
-  Paper,
-  Typography,
-  Button,
   Alert,
+  Box,
+  Button,
+  IconButton,
   LinearProgress,
-  Card,
+  Paper,
   Stack,
-  Chip,
+  TextField,
+  Tooltip,
+  Typography,
   alpha,
 } from '@mui/material'
-import { CloudUpload, AudioFile, CheckCircle, InsertDriveFile } from '@mui/icons-material'
+import {
+  CheckRounded,
+  CloudUploadOutlined,
+  CloseRounded,
+  GraphicEqRounded,
+  AddRounded,
+} from '@mui/icons-material'
 import { uploadRecording } from '../services/api'
 import StatusTracker from '../components/StatusTracker'
+import { CallTypeBadge } from '../components/Badges'
+import { CALL_TYPES, formatFileSize, getCallType } from '../lib/format'
 
-export default function UploadPage() {
+const ACCEPTED = /\.(mp3|wav|m4a|ogg|flac|mp4|aac|opus)$/i
+const MAX_BYTES = 500 * 1024 * 1024
+
+function StepCard({
+  n,
+  title,
+  done,
+  disabled,
+  children,
+}: {
+  n: number
+  title: string
+  done?: boolean
+  disabled?: boolean
+  children: ReactNode
+}) {
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        p: { xs: 2.5, sm: 3 },
+        opacity: disabled ? 0.55 : 1,
+        pointerEvents: disabled ? 'none' : 'auto',
+        transition: 'opacity 200ms',
+      }}
+      aria-disabled={disabled}
+    >
+      <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
+        <Box
+          sx={{
+            width: 26,
+            height: 26,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 13,
+            fontWeight: 700,
+            bgcolor: done ? 'success.main' : 'primary.main',
+            color: '#fff',
+            flexShrink: 0,
+          }}
+        >
+          {done ? <CheckRounded sx={{ fontSize: 17 }} /> : n}
+        </Box>
+        <Typography variant="subtitle1">{title}</Typography>
+      </Stack>
+      {children}
+    </Paper>
+  )
+}
+
+export default function UploadPage({ onViewAll }: { onViewAll?: () => void }) {
+  // No auto-detection: the recording is scored against exactly the checklist
+  // chosen here, so the choice is required and comes first.
+  const [callType, setCallType] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [applicationId, setApplicationId] = useState('')
+  const [customerName, setCustomerName] = useState('')
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [evaluationId, setEvaluationId] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [error, setError] = useState('')
+  const [submitted, setSubmitted] = useState<{ id: string; cached: boolean } | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [touched, setTouched] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFileChange = (selectedFile: File | null) => {
-    if (selectedFile) {
-      // Validate audio file
-      if (!selectedFile.name.match(/\.(mp3|wav|m4a|ogg|flac)$/i)) {
-        setMessage({ type: 'error', text: 'Please select an audio file (MP3, WAV, M4A, OGG, FLAC)' })
-        return
-      }
-      
-      // Check file size (max 500 MB)
-      if (selectedFile.size > 500 * 1024 * 1024) {
-        setMessage({ type: 'error', text: 'File size must be less than 500 MB' })
-        return
-      }
-      
-      setFile(selectedFile)
-      setMessage(null)
+  const selectedType = getCallType(callType)
+  const idMissing = !applicationId.trim()
+  const ready = Boolean(callType && file && !idMissing)
+
+  const pickFile = (f: File | null | undefined) => {
+    if (!f) return
+    if (!ACCEPTED.test(f.name)) {
+      setError('That file is not a supported audio format. Use MP3, WAV, M4A, OGG, FLAC, AAC or MP4.')
+      return
+    }
+    if (f.size > MAX_BYTES) {
+      setError('That file is larger than 500 MB.')
+      return
+    }
+    setFile(f)
+    setError('')
+    // Suggest an application ID from the file name; the user can overwrite it.
+    if (!applicationId) {
+      const base = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9-_]/g, '-')
+      setApplicationId(`APP-${base.substring(0, 20).toUpperCase()}`)
     }
   }
 
-  const handleDrag = (e: React.DragEvent) => {
+  const handleDrag = (e: DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true)
-    } else if (e.type === 'dragleave') {
-      setDragActive(false)
-    }
+    setDragActive(e.type === 'dragenter' || e.type === 'dragover')
   }
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = (e: DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setDragActive(false)
-    
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileChange(e.dataTransfer.files[0])
-    }
+    pickFile(e.dataTransfer.files?.[0])
   }
 
   const handleSubmit = async () => {
-    if (!file) {
-      setMessage({ type: 'error', text: 'Please select an audio file' })
-      return
-    }
-
+    setTouched(true)
+    if (!ready || !file) return
     setUploading(true)
     setProgress(0)
-    setMessage(null)
-
+    setError('')
     try {
-      // Generate application ID based on file name and size for caching
-      // Same file (name + size) = same application ID = cache hit
-      const fileHash = `${file.name}-${file.size}`.replace(/[^a-zA-Z0-9-]/g, '_')
-      const shortHash = btoa(fileHash).replace(/[^a-zA-Z0-9]/g, '').substring(0, 12).toUpperCase()
-      
-      // Call actual API
       const result = await uploadRecording(
         file,
-        {
-          applicationId: `APP-${shortHash}`,
-          customerName: 'Customer',
-          callType: 'AUTO_DETECT',
-        },
-        (progress) => {
-          setProgress(progress)
-        }
+        { applicationId: applicationId.trim(), customerName: customerName.trim() || 'Unknown', callType },
+        (p) => setProgress(p)
       )
-      
-      setProgress(100)
-      
-      // Check if results were cached
-      if (result.cached) {
-        setMessage({ 
-          type: 'success', 
-          text: `✓ Using cached results! This file was already processed. Evaluation ID: ${result.evaluation_id}` 
-        })
-      } else {
-        setMessage({ 
-          type: 'success', 
-          text: `✓ Upload successful! Evaluation ID: ${result.evaluation_id}` 
-        })
-      }
-      
-      setEvaluationId(result.evaluation_id)
+      setSubmitted({ id: result.evaluation_id, cached: Boolean(result.cached) })
+    } catch (e: any) {
+      setError(e.message || 'Upload failed. Please check your connection and try again.')
+    } finally {
       setUploading(false)
-      
-    } catch (error: any) {
-      setMessage({ type: 'error', text: error.message || 'Upload failed. Please try again.' })
-      setUploading(false)
-      setProgress(0)
     }
   }
 
   const handleReset = () => {
     setFile(null)
-    setEvaluationId(null)
-    setMessage(null)
+    setSubmitted(null)
+    setError('')
     setProgress(0)
+    setApplicationId('')
+    setCustomerName('')
+    setCallType('')
+    setTouched(false)
   }
 
-  return (
-    <Box sx={{ maxWidth: 800, mx: 'auto' }}>
-      {/* Header */}
-      <Box sx={{ textAlign: 'center', mb: 4 }}>
-        <AudioFile sx={{ fontSize: 60, color: 'primary.main', mb: 2 }} />
-        <Typography variant="h4" gutterBottom fontWeight="600">
-          Upload Audio Recording
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Upload your PD verification call recording for automated AI evaluation
-        </Typography>
-      </Box>
+  // ── After upload: progress, then the result ────────────────────────────
+  if (submitted) {
+    return (
+      <Box sx={{ maxWidth: 820, mx: 'auto' }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }} spacing={2} sx={{ mb: 3 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="h5" noWrap>{applicationId.trim()}</Typography>
+              <CallTypeBadge callType={callType} />
+            </Stack>
+            <Typography variant="body2" color="text.secondary" noWrap>
+              {[customerName.trim(), file?.name].filter(Boolean).join(' · ')}
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1}>
+            {onViewAll && <Button onClick={onViewAll}>All evaluations</Button>}
+            <Button variant="outlined" startIcon={<AddRounded />} onClick={handleReset}>
+              New evaluation
+            </Button>
+          </Stack>
+        </Stack>
 
-      {/* Upload Card */}
-      <Card 
-        elevation={0}
-        sx={{ 
-          border: 2, 
-          borderColor: dragActive ? 'primary.main' : 'divider',
-          borderStyle: 'dashed',
-          bgcolor: dragActive ? alpha('#1976d2', 0.05) : 'background.paper',
-          transition: 'all 0.3s ease',
-          '&:hover': {
-            borderColor: 'primary.main',
-            bgcolor: alpha('#1976d2', 0.02)
-          }
-        }}
-        onDragEnter={handleDrag}
-        onDragLeave={handleDrag}
-        onDragOver={handleDrag}
-        onDrop={handleDrop}
-      >
-        <Box sx={{ p: 6, textAlign: 'center' }}>
+        {submitted.cached && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            This recording was evaluated before, so the earlier result is shown.
+          </Alert>
+        )}
+
+        <Paper variant="outlined" sx={{ p: { xs: 2.5, sm: 4 } }}>
+          <StatusTracker
+            evaluationId={submitted.id}
+            applicationId={applicationId.trim()}
+            customerName={customerName.trim()}
+            callType={callType}
+          />
+        </Paper>
+      </Box>
+    )
+  }
+
+  // ── The form ───────────────────────────────────────────────────────────
+  return (
+    <Box sx={{ maxWidth: 820, mx: 'auto' }}>
+      <Typography variant="h5" sx={{ mb: 3 }}>
+        New evaluation
+      </Typography>
+
+      <Stack spacing={2}>
+        {/* 1 — Call type */}
+        <StepCard n={1} title="Choose the call type" done={Boolean(callType)}>
+          <Box
+            role="radiogroup"
+            aria-label="Call type"
+            sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, gap: 1.5 }}
+          >
+            {CALL_TYPES.map((ct) => {
+              const selected = callType === ct.value
+              return (
+                <Box
+                  key={ct.value}
+                  role="radio"
+                  aria-checked={selected}
+                  tabIndex={0}
+                  onClick={() => setCallType(ct.value)}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setCallType(ct.value))}
+                  sx={{
+                    position: 'relative',
+                    p: 2,
+                    borderRadius: 2,
+                    border: 2,
+                    borderColor: selected ? ct.color : 'divider',
+                    bgcolor: selected ? ct.bg : 'background.paper',
+                    cursor: 'pointer',
+                    transition: 'border-color 150ms, background-color 150ms',
+                    outline: 'none',
+                    '&:hover': { borderColor: selected ? ct.color : alpha(ct.color, 0.45) },
+                    '&:focus-visible': { boxShadow: `0 0 0 3px ${alpha(ct.color, 0.3)}` },
+                  }}
+                >
+                  <Typography variant="body1" fontWeight={700} sx={{ color: selected ? ct.color : 'text.primary', pr: 3 }}>
+                    {ct.label}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {ct.hint}
+                  </Typography>
+                  {selected && (
+                    <Box sx={{ position: 'absolute', top: 12, right: 12, width: 20, height: 20, borderRadius: '50%', bgcolor: ct.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <CheckRounded sx={{ fontSize: 14 }} />
+                    </Box>
+                  )}
+                </Box>
+              )
+            })}
+          </Box>
+          {touched && !callType && (
+            <Typography variant="body2" color="error" sx={{ mt: 1.5 }}>
+              Choose the call type.
+            </Typography>
+          )}
+        </StepCard>
+
+        {/* 2 — Recording */}
+        <StepCard n={2} title="Add the recording" done={Boolean(file)} disabled={!callType}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            hidden
+            accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.aac,.opus"
+            onChange={(e) => {
+              pickFile(e.target.files?.[0])
+              e.target.value = ''
+            }}
+          />
           {!file ? (
-            <>
-              <CloudUpload sx={{ fontSize: 80, color: 'primary.main', mb: 2, opacity: 0.8 }} />
-              <Typography variant="h6" gutterBottom>
-                Drag & Drop Audio File
+            <Box
+              onDragEnter={handleDrag}
+              onDragLeave={handleDrag}
+              onDragOver={handleDrag}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), fileInputRef.current?.click())}
+              sx={{
+                border: 2,
+                borderStyle: 'dashed',
+                borderColor: dragActive ? 'primary.main' : 'divider',
+                bgcolor: dragActive ? alpha('#1e3a8a', 0.04) : 'background.default',
+                borderRadius: 2,
+                py: { xs: 4, sm: 5 },
+                px: 2,
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'all 150ms',
+                outline: 'none',
+                '&:hover, &:focus-visible': { borderColor: 'primary.main', bgcolor: alpha('#1e3a8a', 0.03) },
+              }}
+            >
+              <CloudUploadOutlined sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
+              <Typography variant="body1" fontWeight={600}>
+                Drop the audio file here, or <Box component="span" sx={{ color: 'primary.main', textDecoration: 'underline' }}>browse</Box>
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                or click to browse
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                MP3, WAV, M4A, OGG, FLAC, AAC or MP4 · up to 500 MB
               </Typography>
-              <Button
-                variant="contained"
-                size="large"
-                startIcon={<InsertDriveFile />}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                sx={{ px: 4, py: 1.5 }}
-              >
-                Select Audio File
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                hidden
-                accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac"
-                onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
-              />
-              
-              {/* Supported Formats */}
-              <Stack direction="row" spacing={1} justifyContent="center" sx={{ mt: 3 }}>
-                <Chip label="MP3" size="small" variant="outlined" />
-                <Chip label="WAV" size="small" variant="outlined" />
-                <Chip label="M4A" size="small" variant="outlined" />
-                <Chip label="OGG" size="small" variant="outlined" />
-                <Chip label="FLAC" size="small" variant="outlined" />
-              </Stack>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                Max file size: 500 MB | Duration: 1-60 minutes
-              </Typography>
-            </>
+            </Box>
           ) : (
-            <>
-              <CheckCircle sx={{ fontSize: 80, color: 'success.main', mb: 2 }} />
-              <Typography variant="h6" gutterBottom>
-                File Selected
-              </Typography>
-              <Paper 
-                elevation={0} 
-                sx={{ 
-                  p: 2, 
-                  bgcolor: alpha('#2e7d32', 0.08), 
-                  display: 'inline-block',
-                  mt: 2,
-                  mb: 3
-                }}
-              >
-                <Typography variant="body1" fontWeight="500">
+            <Stack
+              direction="row"
+              spacing={2}
+              alignItems="center"
+              sx={{ p: 2, borderRadius: 2, border: 1, borderColor: 'divider', bgcolor: 'background.default' }}
+            >
+              <Box sx={{ width: 40, height: 40, borderRadius: 2, bgcolor: alpha('#1e3a8a', 0.08), color: 'primary.main', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <GraphicEqRounded />
+              </Box>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography variant="body2" fontWeight={600} noWrap title={file.name}>
                   {file.name}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                <Typography variant="caption" color="text.secondary">
+                  {formatFileSize(file.size)}
                 </Typography>
-              </Paper>
-              
+              </Box>
               {!uploading && (
-                <Box>
-                  <Button
-                    variant="text"
-                    size="small"
-                    onClick={() => setFile(null)}
-                    sx={{ mr: 2 }}
-                  >
-                    Remove
+                <>
+                  <Button size="small" onClick={() => fileInputRef.current?.click()}>
+                    Replace
                   </Button>
-                  <Button
-                    variant="text"
-                    size="small"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    Choose Different File
-                  </Button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    hidden
-                    accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac"
-                    onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
-                  />
-                </Box>
+                  <Tooltip title="Remove">
+                    <IconButton size="small" onClick={() => setFile(null)} aria-label="Remove file">
+                      <CloseRounded fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </>
               )}
-            </>
+            </Stack>
           )}
-        </Box>
-      </Card>
+          {touched && callType && !file && (
+            <Typography variant="body2" color="error" sx={{ mt: 1.5 }}>
+              Add the recording.
+            </Typography>
+          )}
+        </StepCard>
 
-      {/* Messages */}
-      {message && (
-        <Alert 
-          severity={message.type} 
-          onClose={() => setMessage(null)}
-          sx={{ mt: 3 }}
-        >
-          {message.text}
+        {/* 3 — Details */}
+        <StepCard n={3} title="Confirm the details" done={Boolean(file && !idMissing)} disabled={!file}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            <TextField
+              label="Application ID"
+              value={applicationId}
+              onChange={(e) => setApplicationId(e.target.value)}
+              placeholder="e.g. APP-12345"
+              fullWidth
+              required
+              error={touched && idMissing}
+              helperText={touched && idMissing ? 'Enter the application ID' : ' '}
+            />
+            <TextField
+              label="Customer name (optional)"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              placeholder="e.g. Ramesh Kumar"
+              fullWidth
+              helperText=" "
+            />
+          </Stack>
+        </StepCard>
+      </Stack>
+
+      {error && (
+        <Alert severity="error" onClose={() => setError('')} sx={{ mt: 2 }}>
+          {error}
         </Alert>
       )}
 
-      {/* Progress */}
-      {uploading && (
-        <Paper elevation={0} sx={{ p: 3, mt: 3, bgcolor: alpha('#1976d2', 0.05) }}>
-          <Typography variant="body2" gutterBottom fontWeight="500">
-            Uploading... {progress}%
-          </Typography>
-          <LinearProgress 
-            variant="determinate" 
-            value={progress} 
-            sx={{ height: 8, borderRadius: 4 }}
-          />
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-            Processing will start automatically after upload completes
-          </Typography>
-        </Paper>
-      )}
-
-      {/* Upload Button */}
-      <Button
-        variant="contained"
-        size="large"
-        fullWidth
-        onClick={handleSubmit}
-        disabled={uploading || !file}
-        startIcon={<CloudUpload />}
-        sx={{ 
-          mt: 3, 
-          py: 2,
-          fontSize: '1.1rem',
-          fontWeight: 600,
-          boxShadow: 3,
-          '&:hover': {
-            boxShadow: 6
-          }
-        }}
-      >
-        {uploading ? 'Uploading...' : 'Upload & Start Processing'}
-      </Button>
-
-      {/* Info Box */}
-      <Paper 
-        elevation={0} 
-        sx={{ 
-          p: 3, 
-          mt: 4, 
-          bgcolor: alpha('#ed6c02', 0.05),
-          border: 1,
-          borderColor: alpha('#ed6c02', 0.2)
-        }}
-      >
-        <Typography variant="subtitle2" gutterBottom fontWeight="600" color="warning.dark">
-          📋 What happens after upload?
-        </Typography>
-        <Stack spacing={1} sx={{ mt: 2 }}>
-          <Typography variant="body2" color="text.secondary">
-            1️⃣ Audio transcription (Hindi/English supported) — ~3-5 min
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            2️⃣ AI evaluation of 37 criteria with evidence — ~1-2 min
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            3️⃣ Excel scorecard generation with timestamps — ~10 sec
-          </Typography>
-          <Typography variant="body2" color="text.secondary" fontWeight="500" sx={{ mt: 1 }}>
-            ⏱️ Total time: 5-8 minutes | Real-time status shown below
-          </Typography>
-        </Stack>
+      {/* Submit */}
+      <Paper variant="outlined" sx={{ mt: 2, p: 2.5 }}>
+        {uploading ? (
+          <Box>
+            <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
+              <Typography variant="body2" fontWeight={600}>
+                Uploading…
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                {progress}%
+              </Typography>
+            </Stack>
+            <LinearProgress variant="determinate" value={progress} sx={{ height: 8, borderRadius: 4 }} />
+          </Box>
+        ) : (
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between">
+            <Typography variant="body2" color="text.secondary">
+              {ready
+                ? `Will be scored against the ${selectedType?.label} checklist.`
+                : !callType
+                  ? 'Start by choosing the call type.'
+                  : !file
+                    ? 'Next, add the recording.'
+                    : 'Enter the application ID to continue.'}
+            </Typography>
+            <Button
+              variant="contained"
+              size="large"
+              onClick={handleSubmit}
+              disabled={uploading}
+              sx={{ px: 4, flexShrink: 0, ...(!ready && { opacity: 0.6 }) }}
+            >
+              Start evaluation
+            </Button>
+          </Stack>
+        )}
       </Paper>
-
-      {/* Status Tracker */}
-      {evaluationId && (
-        <>
-          <StatusTracker evaluationId={evaluationId} />
-          <Button
-            variant="outlined"
-            fullWidth
-            onClick={handleReset}
-            sx={{ mt: 3 }}
-          >
-            Upload Another File
-          </Button>
-        </>
-      )}
     </Box>
   )
 }

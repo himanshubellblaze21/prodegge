@@ -54,6 +54,25 @@ resource "aws_s3_object" "excel_template" {
   etag         = filemd5("${path.module}/../.vscode/template/Prodigee_Template.xlsx")
 }
 
+# Scorecard templates — every version in scorecards/registry.json, uploaded to
+# the S3 key the Excel generator reads for that version and call type.
+locals {
+  scorecard_templates = merge([
+    for version, meta in jsondecode(file("${path.module}/../scorecards/registry.json")).versions : {
+      for call_type, t in meta.templates : "v${version}/${call_type}" => t
+    }
+  ]...)
+}
+
+resource "aws_s3_object" "scorecard_template" {
+  for_each     = local.scorecard_templates
+  bucket       = aws_s3_bucket.reports.id
+  key          = each.value.s3_key
+  source       = "${path.module}/../${each.value.source}"
+  content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  etag         = filemd5("${path.module}/../${each.value.source}")
+}
+
 # Upload Rubric
 resource "aws_s3_object" "rubric" {
   bucket       = aws_s3_bucket.reports.id
@@ -190,18 +209,12 @@ data "archive_file" "transcription_lambda" {
   excludes    = ["__pycache__", "*.pyc"]
 }
 
-data "archive_file" "evaluation_lambda" {
-  type        = "zip"
-  source_dir  = "${path.module}/../lambda/evaluation"
-  output_path = "${path.module}/packages/evaluation-lambda.zip"
-  excludes    = ["__pycache__", "*.pyc"]
-}
-
-data "archive_file" "excel_generator_lambda" {
-  type        = "zip"
-  source_dir  = "${path.module}/../lambda/excel-generator"
-  output_path = "${path.module}/packages/excel-generator-lambda.zip"
-  excludes    = ["__pycache__", "*.pyc"]
+# The evaluation and excel-generator zips are built by create_evaluation_package.py
+# and create_excel_package.py: both bundle the scorecard registry (scorecards/)
+# from the repo root, which a source_dir archive of the Lambda folder would miss.
+locals {
+  evaluation_zip      = "${path.module}/../lambda/evaluation/deployment-package.zip"
+  excel_generator_zip = "${path.module}/../lambda/excel-generator/deployment-package.zip"
 }
 
 data "archive_file" "ingestion_lambda" {
@@ -263,14 +276,14 @@ resource "aws_lambda_function" "transcription" {
 }
 
 resource "aws_lambda_function" "evaluation" {
-  filename         = data.archive_file.evaluation_lambda.output_path
+  filename         = local.evaluation_zip
   function_name    = "${var.project_name}-evaluation-${var.environment}"
   role            = aws_iam_role.lambda_role.arn
   handler         = "handler.lambda_handler"
   runtime         = "python3.11"
   timeout         = 900
   memory_size     = 2048
-  source_code_hash = data.archive_file.evaluation_lambda.output_base64sha256
+  source_code_hash = filebase64sha256(local.evaluation_zip)
 
   environment {
     variables = {
@@ -286,14 +299,14 @@ resource "aws_lambda_function" "evaluation" {
 }
 
 resource "aws_lambda_function" "excel_generator" {
-  filename         = data.archive_file.excel_generator_lambda.output_path
+  filename         = local.excel_generator_zip
   function_name    = "${var.project_name}-excel-generator-${var.environment}"
   role            = aws_iam_role.lambda_role.arn
   handler         = "handler.lambda_handler"
   runtime         = "python3.11"
   timeout         = 300
   memory_size     = 512
-  source_code_hash = data.archive_file.excel_generator_lambda.output_base64sha256
+  source_code_hash = filebase64sha256(local.excel_generator_zip)
 
   environment {
     variables = {

@@ -1,0 +1,68 @@
+{
+  "_comment": "Legacy (client V2.0 Simple). Reproduces the evaluator exactly as it ran before versioning. Do not edit - legacy evaluations are regenerated from this.",
+  "call_types": {
+    "BCM_PHYSICAL_PD": {
+      "type_note": "Single-speaker narration by BCM after field visits. BCM describes what he SAW, checked and heard.",
+      "section_names": {"A": "Visit & Photos", "B": "Business", "C": "Farm, Dairy & Other Income", "D": "Loans & Repayment", "E": "Family & Home", "F": "Property", "G": "Loan Purpose & Your View"},
+      "duration_minutes": [15, 25],
+      "applicable_rule": "bcm_drop_c_without_other_income",
+      "e6_input": "other_income",
+      "absence_rule": null,
+      "general_rules": [],
+      "criteria": {
+        "A5": {"required": {"phrases": "PHOTO", "missing": "photos taken/uploaded are never mentioned"}},
+        "B5": {"required": {"phrases": "STOCK", "missing": "stock is never mentioned, so it cannot have been counted"}},
+        "B7": {"required": {"phrases": "AA", "missing": "the Account Aggregator check is never mentioned"}},
+        "B8": {"required": {"phrases": "NEIGHBOUR", "missing": "no business neighbour is ever mentioned"}},
+        "E3": {"required": {"phrases": "NEIGHBOUR", "missing": "no home neighbour is ever mentioned"}},
+        "C2": {"required": {"phrases": "KCC", "missing": "KCC was never asked about"}},
+        "D2": {"required": {"phrases": "NACH", "missing": "NACH / how EMIs are paid was never asked"}},
+        "E4": {"required": {"phrases": "CLEANTRACK", "missing": "the Clean Track Reward was never explained"}},
+        "F2": {"required": {"phrases": "PAPERS", "missing": "no property document type is ever named"}}
+      },
+      "red_flags": "  PD-RF-1 Business appears staged/fake — borrowed stock, arranged premises, or scale far below the claim. [STOP - RCU referral]\n  PD-RF-2 Borrower avoided meeting at the business / met only away from the premises. [re-visit required]\n  PD-RF-3 Neighbours contradict the borrower's business or character claims. [record verbatim; escalate to RCM]\n  PD-RF-4 Undisclosed obligations found on the ground (market/hand loans, MFI, society). [re-run obligations in CAM]\n  PD-RF-5 Agri income claimed but land not owned / not cultivated / no yield proof. [strike agri income]\n  PD-RF-6 Collateral problem — papers not original/complete, disputed, third-party occupied, ST land. [STOP - Legal/RCU]\n  PD-RF-7 Family or co-borrower unaware of, or opposed to, the loan. [hold; RCM to re-probe]\n  PD-RF-8 Commission demand or hidden middleman revealed during the visits. [STOP - CCRO + conduct referral]\n  PD-RF-9 A physical record the officer inspected (dairy/milk register, sales book, stock count) states a\n          higher figure than what the officer's own on-ground count/observation supports — proof looks\n          inflated or backdated. [strike/cap the affected income; note even if the officer already flagged it]"
+    },
+    "BM_AUDIO_FI": {
+      "type_note": "Two-party phone call. BM asks questions; customer answers. 5-15 min genuineness check.",
+      "section_names": {"A": "Call Opening & Identity", "B": "Sourcing, RM Visit & Login Fee", "C": "Loan, Product & End Use", "D": "All Incomes of the Household", "E": "Current Loans & Other Applications", "F": "Collateral Property", "G": "Call Conduct & BM Decision"},
+      "duration_minutes": [5, 15],
+      "applicable_rule": "fixed",
+      "e6_input": "both_sides_audible",
+      "absence_rule": null,
+      "general_rules": [],
+      "criteria": {
+        "A1": {"required": {"phrases": "RECORDING", "missing": "the \"yeh call record ho rahi hai\" notice was never said"}},
+        "B2": {"required": {"phrases": "LOGINFEE", "missing": "the login fee is never discussed"}},
+        "B3": {"required": {"phrases": "COMMISSION", "missing": "agent/broker/commission is never asked about"}},
+        "C1": {"required": {"phrases": "MORTGAGE", "missing": "the property being mortgaged is never spelled out"}},
+        "D4": {"required": {"phrases": "KCC", "missing": "KCC was never asked about"}},
+        "F2": {"required": {"phrases": "PAPERS", "missing": "no property document type is ever named"}},
+        "G2": {"required": {"phrases": "CLEANTRACK", "missing": "the Clean Track Reward was never explained"}},
+        "G3": {"required": {"phrases": "DECISION", "missing": "no forward/reject decision is stated on the recording"}}
+      },
+      "red_flags": "  FI-RF-1 Customer unaware a loan application exists, or does not know Prodigee. [STOP - RCU & CCRO, possible fraud]\n  FI-RF-2 Loan amount stated differs from the application by more than ±10%. [reconcile with RM]\n  FI-RF-3 Agent / broker / DSA involvement surfaced in sourcing. [STOP - CCRO, channel integrity review]\n  FI-RF-4 Anyone demanded commission, fees or money from the customer. [STOP - CCRO + conduct referral]\n  FI-RF-5 Income below policy gates (household < ₹30,000/month, or no earner ≥ ₹15,000). [REJECT at BM stage]\n  FI-RF-6 Overdue/bounce unexplained or denied, or a loan disclosed that the bureau does not show. [reject or hold]\n  FI-RF-7 Customer reluctant to mortgage, or an existing charge/dispute on the property. [hold; Legal if a charge exists]\n  FI-RF-8 RM never visited the customer / the sourcing story contradicts the record. [return to RM]"
+    },
+    "RCM_AUDIO_PD": {
+      "type_note": "Two-party phone call. RCM conducts personal discussion with customer/borrower. 10-20 min.",
+      "section_names": {"A": "Call Opening & Identity", "B": "Loan Amount, BCM Visit & Integrity", "C": "End Use", "D": "Income — Call vs BCM Assessment", "E": "Obligations", "F": "Family & Co-Borrower", "G": "Collateral Property", "H": "Repayment Capacity & Intent", "I": "Disclosures, Close & Decision"},
+      "duration_minutes": [10, 20],
+      "applicable_rule": "fixed",
+      "e6_input": "both_sides_audible",
+      "absence_rule": null,
+      "general_rules": [],
+      "criteria": {
+        "A1": {"required": {"phrases": "RECORDING", "missing": "the \"yeh call record ho rahi hai\" notice was never said"}},
+        "B3": {"required": {"phrases": "COMMISSION", "missing": "commission / agent involvement was never asked about"}},
+        "B4": {"required": {"phrases": "MORTGAGE", "missing": "the property being mortgaged is never spelled out"}},
+        "D4": {"required": {"phrases": "KCC", "missing": "KCC was never asked about"}},
+        "D5": {"required": {"phrases": "AA", "missing": "the Account Aggregator check is never mentioned"}},
+        "G1": {"required": {"phrases": "PAPERS", "missing": "no original property document is ever named"}},
+        "G3": {"required": {"phrases": "DISPUTE", "missing": "dispute / court case / existing charge was never explicitly ruled out"}},
+        "H3": {"required": {"phrases": "NACH", "missing": "NACH / auto-debit commitment was never mentioned"}},
+        "I3": {"required": {"phrases": "NEXTSTEPS", "missing": "the next steps (sanction / KFS / disbursement / grievance) were never told"}},
+        "I4": {"required": {"phrases": "DECISION", "missing": "no approve/reject decision is stated on the recording"}}
+      },
+      "red_flags": "  RF-1  Customer unaware a loan application exists, or does not know Prodigee. [STOP - RCU & CCRO]\n  RF-2  Loan amount stated by the customer differs from the file by more than ±10%. [reconcile with BCM]\n  RF-3  End use stated on the call conflicts with the declared end use. [fresh declaration; CCRO note]\n  RF-4  Customer-stated income deviates from the assessed income by more than ±20%. [return for reassessment]\n  RF-5  Customer discloses a loan/EMI not in the obligations (MFI, society, gold, hand loans). [re-run FOIR]\n  RF-6  Property dispute, existing mortgage/charge, or third-party claim mentioned. [STOP - refer Legal]\n  RF-7  A third party is audibly prompting or coaching the customer's answers. [responses unreliable; re-conduct]\n  RF-8  Customer expects a different product (thinks it is unsecured / a government scheme / a waiver). [mis-selling]\n  RF-9  Income arithmetic on the call cannot support the EMI. [return to credit for FOIR re-check]\n  RF-10 Customer reluctant or refuses on mortgage, NACH, insurance or any sanction condition. [hold sanction]\n  RF-11 Anyone (staff, DSA/connector, third party) demanded commission or money. [STOP - CCRO + conduct referral]\n  RF-12 The BCM did not visit the business and/or residence, or the visit was materially incomplete. [return file]"
+    }
+  }
+}

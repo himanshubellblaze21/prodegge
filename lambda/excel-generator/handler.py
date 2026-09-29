@@ -1,15 +1,17 @@
 """
-Excel Generator Lambda — Prodigee Finance
-Fills Prodigee_Template.xlsx with AI evaluation data.
+Excel Generator Lambda — Prodigee Finance Audio PD
+Reads the evaluation-result.json produced by the Evaluation Lambda and fills
+two sheets in the Excel template of the scorecard version the result was
+scored on (scorecards/registry.json):
+  - Scorecard
+  - My Result
 
-KEY DESIGN DECISION:
-openpyxl saves formulas as strings but does NOT evaluate them.
-To produce a file that shows correct values when opened (without Excel recalculating),
-we REPLACE every formula cell with the pre-computed Python value.
-This affects: H col (points), section subtotals, score/grade/verdict,
-Call Summary header, repayment snapshot, and Gap & Coaching Report.
+Templates in S3 (TEMPLATE_BUCKET), per version:
+  v1     → scorecards/v1/{bcm_pd,bm_fi,rcm_audio_pd}_scorecard.xlsx
+  legacy → templates/{bcm_pd,bm_fi,rcm_audio_pd}_template.xlsx
+
+Only the evaluator's inputs are written; the template's formulas are kept.
 """
-
 import json
 import boto3
 import os
@@ -19,791 +21,757 @@ from io import BytesIO
 from decimal import Decimal
 import openpyxl
 from openpyxl.cell.cell import MergedCell
-from typing import Dict, Any, Optional
 
-# AWS clients
+try:
+    import scorecards
+except ImportError:  # running from the repo (tests / tools), not the Lambda zip
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+    import scorecards
+
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
-# Environment
-REPORTS_BUCKET = os.environ['REPORTS_BUCKET']
+REPORTS_BUCKET  = os.environ['REPORTS_BUCKET']
 TEMPLATE_BUCKET = os.environ.get('TEMPLATE_BUCKET', REPORTS_BUCKET)
-TEMPLATE_KEY = os.environ.get('TEMPLATE_KEY', 'templates/prodegee_template.xlsx')
-DYNAMODB_TABLE = os.environ['DYNAMODB_TABLE']
+DYNAMODB_TABLE  = os.environ['DYNAMODB_TABLE']
 
-# Criteria max points — matches template exactly (verified from Prodigee_Template.xlsx)
-CRITERIA_MAX_PTS = {
-    'A1': 2, 'A2': 2, 'A3': 2, 'A4': 2,
-    'B1': 5, 'B2': 4, 'B3': 4, 'B4': 4, 'B5': 4, 'B6': 3,
-    'C1': 4, 'C2': 3, 'C3': 3,
-    'D1': 4, 'D2': 3, 'D3': 3, 'D4': 2,
-    'E1': 4, 'E2': 5, 'E3': 4, 'E4': 3,
-    'F1': 4, 'F2': 4, 'F3': 3, 'F4': 3,
-    'G1': 3, 'G2': 4, 'G3': 3,
-    'H1': 2, 'H2': 2, 'H3': 2,
-}
-
-# Section to criteria mapping
-SECTION_CRITERIA = {
-    'A': ['A1','A2','A3','A4'],
-    'B': ['B1','B2','B3','B4','B5','B6'],
-    'C': ['C1','C2','C3'],
-    'D': ['D1','D2','D3','D4'],
-    'E': ['E1','E2','E3','E4'],
-    'F': ['F1','F2','F3','F4'],
-    'G': ['G1','G2','G3'],
-    'H': ['H1','H2','H3'],
-}
-
-SECTION_NAMES = {
-    'A': 'A — Recording Setup & Visit Identification',
-    'B': 'B — Business Verification (every income stream)',
-    'C': 'C — Agricultural Income Verification',
-    'D': 'D — Obligations & Family Expenses',
-    'E': 'E — Residence, Family & Co-Borrower',
-    'F': 'F — Collateral Verification',
-    'G': 'G — End Use & Overall Assessment',
-    'H': 'H — Narration Quality',
-}
+# Criteria, sections and the template come from the scorecard version the
+# result was scored on — never from the current version — so a legacy result
+# regenerated today still lands in the sheet it was marked against.
+def get_config(call_type: str, version: str = None):
+    cfg = scorecards.config(call_type, version or scorecards.current_version())
+    return cfg['criteria'], cfg['section_pts'], cfg['section_names']
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def safe_set(ws, cell_ref: str, value: Any):
-    """Write a plain value to a cell, resolving merged cells to their anchor."""
+def safe_set(ws, cell_ref: str, value):
+    """
+    Write a value to a cell, resolving merged-cell anchors — but NEVER over a
+    formula.
+
+    Two bugs came out of the old version. Writing to a merged cell resolved to
+    its anchor, so `D4` landed on `C4` and wiped the printed header label
+    ("Recording length (minutes)"). And writing computed numbers over the
+    template's formulas turned a live scorecard into a dead one. Both were
+    raised in the client's review, so both are blocked here rather than relying
+    on every call site to remember.
+    """
     cell = ws[cell_ref]
     if isinstance(cell, MergedCell):
         for mr in ws.merged_cells.ranges:
             if cell.coordinate in mr:
-                ws[mr.start_cell.coordinate] = value
+                anchor = ws.cell(row=mr.min_row, column=mr.min_col)
+                if isinstance(anchor, MergedCell):
+                    return
+                if isinstance(anchor.value, str) and anchor.value.startswith('='):
+                    print(f"  skip {cell_ref}: would overwrite formula at {anchor.coordinate}")
+                    return
+                anchor.value = value
                 return
-    else:
-        cell.value = value
+        return
+    if isinstance(cell.value, str) and cell.value.startswith('='):
+        print(f"  skip {cell_ref}: template formula preserved")
+        return
+    cell.value = value
 
 
-def find_criterion_rows(ws) -> Dict[str, int]:
-    """Map criterion ID (A1…H3) → row number by scanning col A."""
+def find_item_rows(ws) -> dict:
+    """
+    Scan column A for criterion IDs like A1, B2, G4, I3 etc.
+    MUST items are annotated in some sheets (e.g. "My Result") with a
+    trailing star marker — "A1 ★" / "A1*" — which must still match the
+    plain id, otherwise MUST-item rows are silently skipped.
+    Returns {id: row_number} (1-based).
+    """
     rows = {}
-    for row in range(1, 100):
-        val = ws[f'A{row}'].value
+    for row in range(1, 200):
+        val = ws.cell(row=row, column=1).value
         if val and isinstance(val, str):
-            m = re.match(r'^([A-H]\d{1,2})\s*$', val.strip())
+            m = re.match(r'^([A-J]\d{1,2})\s*[★*]?\s*$', val.strip())
             if m:
                 rows[m.group(1)] = row
-    print(f"Found {len(rows)} criterion rows")
+    print(f"  Item rows found: {len(rows)}")
     return rows
 
 
-def find_gate_rows(ws) -> Dict[str, int]:
-    """Map gate ID (K1…K8) → row number by scanning col A."""
-    rows = {}
-    for row in range(1, 100):
-        val = ws[f'A{row}'].value
-        if val and isinstance(val, str) and val.strip() in ['K1','K2','K3','K4','K5','K6','K7','K8']:
-            rows[val.strip()] = row
-    print(f"Found {len(rows)} gate rows")
-    return rows
-
-
-def pts_for_coverage(coverage: str, max_pts: float) -> float:
-    """Compute points exactly as the Excel formula: Full→max, Partial→max/2, else 0."""
-    if coverage == 'Full':
-        return max_pts
-    if coverage == 'Partial':
-        return max_pts / 2.0
-    return 0.0  # None or N/A
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# COMPUTE DERIVED VALUES
-# ─────────────────────────────────────────────────────────────────────────────
-
-def compute_derived(evaluation_data: Dict[str, Any]) -> Dict[str, Any]:
+def find_summary_rows(ws) -> dict:
     """
-    Pre-compute all values that the template normally derives via formula:
-      - per-criterion points scored
-      - section applicable/scored/coverage%
-      - total score
-      - knockout status, grade band, final verdict
-      - repayment snapshot figures
-      - gap items
-    Returns a flat dict for use by fill functions.
+    Scan every cell in the first 8 columns for summary keyword labels.
+    Returns {keyword_key: row_number}.
+    Keywords detected:
+      recording_valid, points_applicable, points_scored, score_100,
+      must_count, must_list, result
     """
-    criteria = evaluation_data.get('ai_evaluation', {}).get('criteria', [])
-    criteria_by_id = {c['id']: c for c in criteria}
-
-    gate_results = evaluation_data.get('scoring', {}).get('gate_results', {})
-    if not gate_results:
-        # Fallback from critical_failures
-        failures = {f.get('flag') for f in evaluation_data.get('scoring', {}).get('critical_failures', [])}
-        gate_results = {f'K{i}': ('FAIL' if f'K{i}' in failures else 'PASS') for i in range(1, 9)}
-
-    # ── per-criterion points — always computed deterministically, never from AI ──
-    criterion_points = {}
-    for cid, max_pts in CRITERIA_MAX_PTS.items():
-        c = criteria_by_id.get(cid, {})
-        coverage = c.get('coverage', 'None')
-        if coverage == 'N/A':
-            criterion_points[cid] = None  # excluded from scoring
-        else:
-            criterion_points[cid] = float(pts_for_coverage(coverage, max_pts))
-
-    # ── section subtotals ─────────────────────────────────────────────────
-    sections = {}
-    for sid, cids in SECTION_CRITERIA.items():
-        max_total = sum(CRITERIA_MAX_PTS[c] for c in cids)
-        applicable = sum(CRITERIA_MAX_PTS[c] for c in cids
-                        if criterion_points.get(c) is not None)
-        scored = sum(criterion_points[c] for c in cids
-                    if criterion_points.get(c) is not None)
-        coverage_pct = round(scored / applicable * 100) if applicable > 0 else 'N/A'
-        sections[sid] = {
-            'max': max_total,
-            'applicable': applicable,
-            'scored': scored,
-            'coverage_pct': coverage_pct,
-        }
-
-    # ── total score (normalised to 100) ───────────────────────────────────
-    total_applicable = sum(s['applicable'] for s in sections.values())
-    total_scored = sum(s['scored'] for s in sections.values())
-    total_score = round(total_scored / total_applicable * 100, 1) if total_applicable > 0 else 0
-
-    # ── knockout, grade, verdict (matches template formulas exactly) ──────
-    any_fail = any(v == 'FAIL' for v in gate_results.values())
-    any_not_tested = any(v == 'NOT_TESTED' for v in gate_results.values())
-    if any_fail:
-        knockout_status = 'FAILED — INVALID'
-        grade_band = 'D — Fail'
-        verdict = 'INVALID — RE-RECORD NARRATION'
-    elif any_not_tested:
-        knockout_status = 'CONDITIONAL — K8 NOT TESTED (uploads not supplied)'
-        # Still grade on score, but note the untested gate
-        if total_score >= 90:
-            grade_band = 'A — Excellent'
-            verdict = 'FI ACCEPTED — pending K8 verification'
-        elif total_score >= 75:
-            grade_band = 'B — Pass'
-            verdict = 'FI ACCEPTED — pending K8 verification'
-        elif total_score >= 60:
-            grade_band = 'C — Conditional'
-            verdict = 'SUPPLEMENTARY CALL before CPA'
-        else:
-            grade_band = 'D — Fail'
-            verdict = 'RE-CONDUCT FI'
-    elif total_score >= 90:
-        knockout_status = 'ALL PASSED'
-        grade_band = 'A — Excellent'
-        verdict = 'FI ACCEPTED — BM decision stands'
-    elif total_score >= 75:
-        knockout_status = 'ALL PASSED'
-        grade_band = 'B — Pass'
-        verdict = 'FI ACCEPTED — BM decision stands'
-    elif total_score >= 60:
-        knockout_status = 'ALL PASSED'
-        grade_band = 'C — Conditional'
-        verdict = 'SUPPLEMENTARY CALL before CPA'
-    else:
-        knockout_status = 'ALL PASSED'
-        grade_band = 'D — Fail'
-        verdict = 'RE-CONDUCT FI'
-
-    # ── repayment snapshot ────────────────────────────────────────────────
-    cs = evaluation_data.get('ai_evaluation', {}).get('call_summary', {})
-    inc_sum = cs.get('income_summary', {})
-    ob_sum = cs.get('obligations_summary', {})
-    fam_sum = cs.get('family_summary', {})
-
-    def safe_num(val):
-        """Convert val to float safely — returns 0 for None, strings, or non-numeric."""
-        if val is None:
-            return 0
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            return 0
-
-    total_income = safe_num(inc_sum.get('total_assessed'))
-    monthly_expense = safe_num(fam_sum.get('monthly_expense'))
-    total_emi = safe_num(ob_sum.get('total_emi'))
-
-    # Also sum from income_streams if total_assessed is zero/null
-    if not total_income:
-        streams = cs.get('income_streams', [])
-        total_income = sum(
-            safe_num(s.get('assessed_monthly') or s.get('stated_monthly'))
-            for s in streams if isinstance(s, dict)
-        )
-
-    # Also sum from obligations if total_emi is zero/null
-    if not total_emi:
-        obs = cs.get('obligations', [])
-        total_emi = sum(
-            safe_num(o.get('emi_monthly'))
-            for o in obs if isinstance(o, dict)
-        )
-
-    monthly_surplus = total_income - monthly_expense - total_emi
-
-    CRITERIA_NAMES_MAP = {
-        'A1': 'Case identified on record', 'A2': 'All visits confirmed — when and whom',
-        'A3': 'Photo/document capture confirmed', 'A4': 'Same-day recording, correct duration',
-        'B1': 'Every business visited and described as seen', 'B2': 'Borrower met at business',
-        'B3': 'Income assessed per stream with arithmetic', 'B4': 'Income documents asked and examined',
-        'B5': 'Business-neighbour enquiry narrated', 'B6': 'Genuineness view — no staged setup',
-        'C1': 'Land visited; ownership and acreage verified', 'C2': 'Crops and yield verified with proof',
-        'C3': 'Cultivation genuineness + KCC noted',
-        'D1': 'All obligations enumerated with amounts', 'D2': 'Family expenses and lifestyle assessed',
-        'D3': 'Surplus arithmetic narrated', 'D4': 'Recent loan enquiries probed with outcomes',
-        'E1': 'Residence visited and described', 'E2': 'Family and co-borrower interviewed',
-        'E3': 'Residence-neighbour enquiry narrated', 'E4': 'Customer education confirmed',
-        'F1': 'Collateral visited and physically described', 'F2': 'Original papers seen; owner and title chain',
-        'F3': 'Approximate market value with basis', 'F4': 'Risk screen stated',
-        'G1': 'End use verified on ground', 'G2': 'Overall credit view',
-        'G3': 'Clear recommendation with reasons',
-        'H1': 'Structured and specific', 'H2': 'Duration and audibility', 'H3': 'Honest flagging of gaps',
+    mapping = {}
+    patterns = {
+        'recording_valid':    re.compile(r'recording\s+valid', re.I),
+        'points_applicable':  re.compile(r'points\s+applicable', re.I),
+        'points_scored':      re.compile(r'points\s+scored', re.I),
+        'score_100':          re.compile(r'score\s*\(?\s*out\s+of\s+100', re.I),
+        'must_count':         re.compile(r'must\s+items\s+not\s+fully\s+covered\s*\(?\s*count', re.I),
+        'must_list':          re.compile(r'must\s+items\s+missed', re.I),
+        'result':             re.compile(r'^result\s*$', re.I),
     }
+    for row in range(1, 200):
+        for col in range(1, 9):
+            val = ws.cell(row=row, column=col).value
+            if not val or not isinstance(val, str):
+                continue
+            v = val.strip()
+            for key, pat in patterns.items():
+                if key not in mapping and pat.search(v):
+                    mapping[key] = row
+    print(f"  Summary rows found: {list(mapping.keys())}")
+    return mapping
 
-    # ── gap items ─────────────────────────────────────────────────────────
-    gap_items = []
-    for cid, max_pts in CRITERIA_MAX_PTS.items():
-        c = criteria_by_id.get(cid, {})
-        coverage = c.get('coverage', 'None')
-        if coverage in ('None', 'Partial'):
-            criterion_name = CRITERIA_NAMES_MAP.get(cid, cid)
-            points_lost = max_pts if coverage == 'None' else max_pts / 2.0
-            prefix = 'NOT NARRATED' if coverage == 'None' else 'INCOMPLETE'
-            gap_items.append({
-                'id': cid,
-                'text': f"{prefix} — {criterion_name}",
-                'points_lost': points_lost,
+
+def score_symbol(score_str: str) -> str:
+    if score_str == 'Yes':  return '✔'
+    if score_str == 'Half': return '½'
+    return '✘'
+
+
+# Column used for the audit trail on each sheet. Both are unused by the
+# templates (Scorecard runs A-H, My Result A-F).
+EVIDENCE_COL = {'scorecard': 'I', 'my_result': 'G'}
+
+
+def format_evidence(item: dict) -> str:
+    """
+    Render the proof cell: the timestamp in the recording plus the words spoken
+    there, so a reviewer can jump to that point and hear it for themselves.
+
+    The timestamp is computed by the evaluation Lambda by locating the quoted
+    words in the diarised segments, so it points at real audio. When the quote
+    could not be located we say so explicitly rather than showing a time that
+    might not be real.
+    """
+    quote = (item.get('evidence') or '').strip()
+    if not quote:
+        return ''
+    # The evaluator occasionally pastes a long passage; keep the cell readable.
+    # The full quote is always preserved in evaluation-result.json.
+    if len(quote) > 280:
+        quote = quote[:277].rstrip() + '…'
+    ts       = item.get('evidence_timestamp') or ''
+    verified = item.get('evidence_verified')
+    speaker  = item.get('evidence_speaker') or ''
+    if verified and ts:
+        who = f" {speaker}" if speaker else ''
+        return f'[{ts}]{who} "{quote}"'
+    return f'[time not located] "{quote}" — could not be matched to the recording; verify manually'
+
+
+def write_evidence_header(ws, col: str, row: int, width: float = 60):
+    """Label the evidence column and make it readable without manual resizing."""
+    from openpyxl.styles import Alignment, Font
+    cell = ws[f'{col}{row}']
+    if not isinstance(cell, MergedCell):
+        cell.value = 'Evidence — timestamp & exact words from the recording'
+        try:
+            header_ref = ws[f'A{row}']
+            if not isinstance(header_ref, MergedCell) and header_ref.font:
+                cell.font = Font(bold=True, size=header_ref.font.size or 11)
+            cell.alignment = Alignment(wrap_text=True, vertical='center')
+        except Exception:
+            pass
+    try:
+        ws.column_dimensions[col].width = width
+    except Exception:
+        pass
+
+
+# Mirrors normalise_score() in the evaluation Lambda. Results written by older
+# versions (or a future evaluator that answers "Full"/"partial") must not be
+# silently read as zero here.
+_SCORE_ALIASES = {
+    'yes': 'Yes', 'full': 'Yes', 'fully': 'Yes', 'fully covered': 'Yes', 'complete': 'Yes',
+    'half': 'Half', 'partial': 'Half', 'partially': 'Half', 'partially covered': 'Half',
+    'no': 'No', 'none': 'No', 'not covered': 'No', 'missing': 'No', 'absent': 'No',
+    'n/a': 'N/A', 'na': 'N/A', 'not applicable': 'N/A',
+}
+
+
+def normalise_score(value) -> str:
+    if not isinstance(value, str):
+        return 'No'
+    v = value.strip()
+    if v in ('Yes', 'Half', 'No', 'N/A'):
+        return v
+    return _SCORE_ALIASES.get(v.lower(), 'No')
+
+
+def validate_template_rows(item_rows: dict, criteria: list, sheet_label: str) -> list:
+    """
+    The scorecard is filled by scanning column A for criterion ids, so a renamed
+    or reordered template row is silently skipped and its cells stay blank (this
+    is exactly how every MUST-item row on the 'My Result' sheet went unfilled
+    until the "A1 ★" marker was accounted for). Report the drift instead.
+    """
+    expected = {c['id'] for c in criteria}
+    found    = set(item_rows.keys())
+    missing  = sorted(expected - found)
+    extra    = sorted(found - expected)
+    warnings = []
+    if missing:
+        warnings.append(f"{sheet_label}: {len(missing)} criterion row(s) not found in template "
+                        f"and left unfilled: {', '.join(missing)}")
+    if extra:
+        warnings.append(f"{sheet_label}: template has row(s) for unknown criteria: {', '.join(extra)}")
+    for w in warnings:
+        print(f"  TEMPLATE WARNING — {w}")
+    return warnings
+
+
+def safe_float(val) -> float:
+    if val is None: return 0.0
+    try: return float(val)
+    except: return 0.0
+
+
+# ── Score computation ─────────────────────────────────────────────────────────
+
+def compute_scores(items: list, criteria: list, section_pts: dict, section_names: dict) -> dict:
+    """
+    Recompute everything from items list (as stored in evaluation-result.json).
+    items: list of {id, score, pts_scored, note}
+    Returns dict with all derived data needed for both sheets.
+    """
+    items_by_id = {i['id']: {**i, 'score': normalise_score(i.get('score'))} for i in items}
+    crit_map    = {c['id']: c for c in criteria}
+
+    # Per-section totals
+    sections = {}
+    for sid in section_pts:
+        sections[sid] = {
+            'name':       section_names[sid],
+            'max':        0,
+            'applicable': 0,
+            'scored':     0.0,
+        }
+    for c in criteria:
+        sid  = c['sec']
+        item = items_by_id.get(c['id'], {})
+        score_str = item.get('score', 'No')
+        pts = c['pts']
+        sections[sid]['max'] += pts
+        if score_str != 'N/A':
+            sections[sid]['applicable'] += pts
+            if score_str == 'Yes':
+                sections[sid]['scored'] += pts
+            elif score_str == 'Half':
+                sections[sid]['scored'] += pts / 2.0
+
+    total_applicable = sum(s['applicable'] for s in sections.values())
+    total_scored     = sum(s['scored']     for s in sections.values())
+    total_score      = round(total_scored / total_applicable * 100, 1) if total_applicable > 0 else 0.0
+
+    # Section percentages and comments
+    for sid, s in sections.items():
+        pct = round(s['scored'] / s['applicable'] * 100) if s['applicable'] > 0 else 0
+        s['pct'] = pct
+        if pct == 100:   s['comment'] = 'Fully covered'
+        elif pct >= 80:  s['comment'] = 'Good — small gaps'
+        elif pct >= 50:  s['comment'] = 'Weak — see items below'
+        else:            s['comment'] = 'Mostly missed'
+
+    # MUST failures
+    must_failures = []
+    for c in criteria:
+        if c['must']:
+            item = items_by_id.get(c['id'], {})
+            s    = item.get('score', 'No')
+            if s in ('Half', 'No'):
+                must_failures.append(c['id'])
+
+    # Verdict
+    if must_failures:
+        missed_str = ', '.join(must_failures)
+        verdict = f'NOT ACCEPTED — MUST items not fully covered: {missed_str}'
+        grade   = 'NOT ACCEPTED'
+    elif total_score >= 90:
+        verdict = 'EXCELLENT — Model recording'
+        grade   = 'EXCELLENT'
+    elif total_score >= 75:
+        verdict = 'ACCEPTED'
+        grade   = 'ACCEPTED'
+    else:
+        verdict = 'NOT ACCEPTED — Score below 75'
+        grade   = 'NOT ACCEPTED'
+
+    # All gaps sorted by points lost (descending)
+    gaps = []
+    for c in criteria:
+        item  = items_by_id.get(c['id'], {})
+        score = item.get('score', 'No')
+        if score in ('No', 'Half'):
+            lost = c['pts'] if score == 'No' else c['pts'] / 2.0
+            gaps.append({
+                'id':       c['id'],
+                'text':     item.get('note', '')[:100],
+                'pts_lost': lost,
+                'score':    score,
             })
-
-    total_points_lost = sum(g['points_lost'] for g in gap_items)
+    gaps.sort(key=lambda x: -x['pts_lost'])
 
     return {
-        'criterion_points': criterion_points,
-        'sections': sections,
-        'total_score': total_score,
-        'total_applicable': total_applicable,
-        'total_scored': total_scored,
-        'knockout_status': knockout_status,
-        'grade_band': grade_band,
-        'verdict': verdict,
-        'gate_results': gate_results,
-        'total_income': total_income,
-        'monthly_expense': monthly_expense,
-        'total_emi': total_emi,
-        'monthly_surplus': monthly_surplus,
-        'gap_items': gap_items,
-        'total_points_lost': total_points_lost,
-        'points_to_90': max(0, round(90 - total_score, 1)),
+        'items_by_id':       items_by_id,
+        'sections':          sections,
+        'total_applicable':  total_applicable,
+        'total_scored':      total_scored,
+        'total_score':       total_score,
+        'grade':             grade,
+        'verdict':           verdict,
+        'must_failures':     must_failures,
+        'gaps':              gaps,
+        'top3_gaps':         gaps[:3],
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SCORECARD SHEET
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Sheet 1: Scorecard ────────────────────────────────────────────────────────
 
-def fill_scorecard(ws, evaluation_data: Dict[str, Any], derived: Dict[str, Any]):
-    """Fill the entire Scorecard sheet."""
+def fill_scorecard(ws, result: dict, derived: dict, criteria: list, call_type: str,
+                   e6_input: str = None):
+    """
+    Fill ONLY the cells a human evaluator would fill, and nothing else.
 
-    # ── Header B2:B7 ──────────────────────────────────────────────────────
-    header_info = evaluation_data.get('ai_evaluation', {}).get('header_info', {})
-    evaluated_at = evaluation_data.get('evaluated_at', datetime.utcnow().isoformat())
+    The client's templates are live spreadsheets: 58-77 formulas on Scorecard
+    and 164-215 on My Result compute every score, subtotal, MUST list and
+    verdict from a handful of inputs. Our previous version hard-coded values
+    over all of them and wrote the header values on top of the C-column
+    labels, which is what came back as "Bell Blaze overwrote the header ...
+    hard-coded every formula in the Scorecard sheet".
+
+    Inputs we own:
+      B4:B7  application id, customer, officer, date
+      E4     recording length in minutes
+      E6     BCM: farm/dairy/other family income? (legacy: drives section C;
+             v1: for record only) | BM & RCM: both sides audible?
+      E7     evaluator
+      E/G/I  per criterion: the mark, the note, and the evidence
+    E5 (uploaded to PRAGATI the same day) is deliberately left blank - it
+    cannot be known from the audio, and asserting it was a documented mistake.
+    """
+    header = result.get('header', {})
+    evaluated_at = result.get('evaluated_at', datetime.utcnow().isoformat())
     try:
         date_str = datetime.fromisoformat(evaluated_at.replace('Z', '')).strftime('%d-%b-%Y')
-    except:
+    except Exception:
         date_str = datetime.utcnow().strftime('%d-%b-%Y')
 
-    ws['B2'] = header_info.get('application_id_mentioned', 'N/A')
-    ws['B3'] = header_info.get('customer_name_mentioned', 'N/A')
-    ws['B4'] = header_info.get('bcm_rcm_name_mentioned', 'N/A')
-    ws['B5'] = date_str
-    ws['B6'] = header_info.get('duration_mentioned', 'N/A')
-    ws['B7'] = header_info.get('loan_amount_mentioned', 'N/A')
-    print(f"Header: {ws['B3'].value} | {ws['B4'].value} | {ws['B7'].value}")
+    safe_set(ws, 'B4', header.get('application_id', 'N/A'))
+    safe_set(ws, 'B5', header.get('customer_name', 'N/A'))
+    safe_set(ws, 'B6', header.get('officer_name', 'N/A'))
+    safe_set(ws, 'B7', date_str)
 
-    # ── Criteria: G=Coverage, H=Points (pre-computed), I=Evidence ─────────
-    criteria_rows = find_criterion_rows(ws)
-    ai_criteria = evaluation_data.get('ai_evaluation', {}).get('criteria', [])
-    criteria_by_id = {c['id']: c for c in ai_criteria}
-    criterion_points = derived['criterion_points']
+    # Values belong in the merged E:G block; C:D holds the printed label.
+    dur_secs = result.get('duration_seconds')
+    if dur_secs:
+        safe_set(ws, 'E4', round(dur_secs / 60, 1))
 
+    e6_input = e6_input or ('other_income' if call_type == 'BCM_PHYSICAL_PD' else 'both_sides_audible')
+    if e6_input == 'other_income':
+        # Legacy BCM templates compute "=100-IF(E6=\"No\",10,0)" from this;
+        # from v1 the cell is informational and section C is always scored.
+        safe_set(ws, 'E6', 'Yes' if result.get('other_income', True) else 'No')
+    elif (result.get('speaker_count') or 0) >= 2 and (result.get('transcript_chars') or 0) > 500:
+        # Both sides audible: two speakers were transcribed at length.
+        safe_set(ws, 'E6', 'Yes')
+
+    safe_set(ws, 'E7', 'AI evaluation (Prodigee Audio PD)')
+
+    # ── Item rows: the mark, the note and the evidence only ──────────────────
+    item_rows = find_item_rows(ws)
+    derived.setdefault('template_warnings', []).extend(
+        validate_template_rows(item_rows, criteria, 'Scorecard'))
+    items_by_id = derived['items_by_id']
     filled = 0
-    for cid, row in criteria_rows.items():
-        c = criteria_by_id.get(cid, {})
-        coverage = c.get('coverage', 'None')
-        # Prefer gate_evidence for critical criteria, fall back to evidence
-        evidence = c.get('gate_evidence') or c.get('evidence', '')
-
-        # G: Coverage
-        safe_set(ws, f'G{row}', coverage)
-
-        # H: Replace formula with computed value
-        pts = criterion_points.get(cid)
-        if pts is not None:
-            safe_set(ws, f'H{row}', pts)
-        else:
-            safe_set(ws, f'H{row}', 0)  # N/A criteria
-
-        # I: Evidence
-        safe_set(ws, f'I{row}', evidence)
+    for cid, row in item_rows.items():
+        item = items_by_id.get(cid, {})
+        safe_set(ws, f'E{row}', item.get('score', 'No'))
+        safe_set(ws, f'G{row}', (item.get('note') or '')[:250])
+        safe_set(ws, f"{EVIDENCE_COL['scorecard']}{row}", format_evidence(item))
         filled += 1
 
-    print(f"Filled {filled} criteria (G=coverage, H=computed points, I=evidence)")
+    header_row = min(item_rows.values()) - 2 if item_rows else 9
+    write_evidence_header(ws, EVIDENCE_COL['scorecard'], header_row)
+    print(f"  Scorecard inputs filled: {filled} items (formulas left intact)")
 
-    # ── Gates E63:E70 — status + evidence text ────────────────────────────
-    # Build a lookup of gate evidence from critical_failures
-    critical_failures = evaluation_data.get('scoring', {}).get('critical_failures', [])
-    gate_evidence_map = {}
-    for cf in critical_failures:
-        gid = cf.get('flag')
-        ev = cf.get('evidence', '')
-        if gid and ev:
-            gate_evidence_map[gid] = ev[:200]
+    write_red_flags_block(ws, result, max(item_rows.values()) if item_rows else 60)
 
-    gate_rows = find_gate_rows(ws)
-    for gid, status in derived['gate_results'].items():
-        row = gate_rows.get(gid)
-        if row:
-            safe_set(ws, f'E{row}', status)
-            # Write gate evidence in the adjacent column F (if it exists)
-            evidence_text = gate_evidence_map.get(gid, '')
-            if evidence_text:
-                safe_set(ws, f'F{row}', evidence_text)
-    print(f"Filled {len(gate_rows)} gates with status and evidence")
 
-    # ── Section subtotals rows 52-59 (replace formulas with values) ───────
-    section_data_rows = {
-        'A': 52, 'B': 53, 'C': 54, 'D': 55, 'E': 56, 'F': 57, 'G': 58, 'H': 59
+def write_red_flags_block(ws, result: dict, last_item_row: int):
+    """
+    Write the red flags below the summary block.
+
+    Added because the client's review put it plainly: "the evaluator only fills
+    what has a cell, and right now red flags have no cell" - and on a call full
+    of them, none were recorded.
+    """
+    from openpyxl.styles import Alignment, Font
+
+    flags = result.get('red_flags') or []
+    # Find the end of the template's own summary block so we sit below it.
+    row = last_item_row + 1
+    for r in range(last_item_row + 1, last_item_row + 25):
+        if any(ws.cell(row=r, column=c).value not in (None, '') for c in range(1, 4)):
+            row = r
+    row += 2
+
+    title = ws.cell(row=row, column=1)
+    if isinstance(title, MergedCell):
+        return
+    title.value = 'RED FLAGS OBSERVED (auto-detected from the recording)'
+    title.font = Font(bold=True)
+    row += 1
+    for col, head in ((1, 'RF code'), (2, 'What was observed'), (3, 'Time'),
+                      (4, 'Exact words from the recording')):
+        cell = ws.cell(row=row, column=col)
+        if not isinstance(cell, MergedCell):
+            cell.value = head
+            cell.font = Font(bold=True)
+    row += 1
+
+    if not flags:
+        cell = ws.cell(row=row, column=1)
+        if not isinstance(cell, MergedCell):
+            cell.value = 'None detected'
+        return
+
+    for f in flags:
+        for col, val in ((1, f.get('code', '')),
+                         (2, f"{f.get('title','')} — {f.get('detail','')}".strip(' —')),
+                         (3, f.get('timestamp', '')),
+                         (4, f.get('evidence', ''))):
+            cell = ws.cell(row=row, column=col)
+            if not isinstance(cell, MergedCell):
+                cell.value = val
+                cell.alignment = Alignment(wrap_text=True, vertical='top')
+        row += 1
+    print(f"  Red flags written: {len(flags)}")
+
+
+def cache_formula_values(xlsx_bytes: bytes, sheet_name: str, values: dict) -> bytes:
+    """
+    Give formula cells a cached result, so the sheet shows its numbers
+    everywhere — not only in desktop Excel.
+
+    A formula cell written by openpyxl carries the formula but no cached value.
+    Desktop Excel recalculates on open and shows the right number, but every
+    preview pane, browser viewer and programmatic reader shows a BLANK score —
+    which is how "the score is missing in the Excel" happens.
+
+    Writing plain values instead would fix that but kill the live sheet the
+    client asked us to stop destroying. So we keep the formula AND inject the
+    value we already computed in Python as its cached result: the sheet reads
+    correctly immediately, and still recalculates the moment anyone edits a mark.
+    """
+    import re as _re
+    import zipfile as _zip
+
+    def sheet_path(zin):
+        wb_xml = zin.read('xl/workbook.xml').decode('utf-8')
+        m = _re.search(rf'<sheet[^>]*name="{_re.escape(sheet_name)}"[^>]*r:id="(rId\d+)"', wb_xml)
+        if not m:
+            return None
+        rels = zin.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        # Attribute order varies between writers, so find the whole
+        # <Relationship> element for this id and pull Target out of it.
+        rel = next((r for r in _re.findall(r'<Relationship\b[^>]*/?>', rels)
+                    if f'Id="{m.group(1)}"' in r), None)
+        if not rel:
+            return None
+        m2 = _re.search(r'Target="([^"]+)"', rel)
+        if not m2:
+            return None
+        target = m2.group(1)
+        # Target is sometimes absolute ("/xl/worksheets/sheet1.xml") and
+        # sometimes relative to xl/ ("worksheets/sheet1.xml").
+        return target.lstrip('/') if target.startswith('/') else 'xl/' + target
+
+    def inject(xml: str) -> str:
+        for ref, val in values.items():
+            pattern = _re.compile(
+                rf'<c r="{ref}"((?:\s+[a-zA-Z:]+="[^"]*")*)\s*>((?:(?!</c>).)*?)</c>', _re.S)
+
+            def repl(m):
+                attrs, body = m.group(1), m.group(2)
+                if '<f' not in body:
+                    return m.group(0)                      # not a formula cell
+                body = _re.sub(r'<v\s*/>|<v[^>]*>.*?</v>', '', body, flags=_re.S)
+                attrs = _re.sub(r'\s+t="[^"]*"', '', attrs)  # drop any existing type
+                if isinstance(val, str):
+                    attrs += ' t="str"'                    # formula returning text
+                return f'<c r="{ref}"{attrs}>{body}<v>{_escape(val)}</v></c>'
+
+            xml = pattern.sub(repl, xml, count=1)
+        return xml
+
+    src, out = BytesIO(xlsx_bytes), BytesIO()
+    with _zip.ZipFile(src) as zin:
+        path = sheet_path(zin)
+        if not path or path not in zin.namelist():
+            raise KeyError(f'could not locate sheet XML for {sheet_name!r}')
+        with _zip.ZipFile(out, 'w', _zip.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == path:
+                    data = inject(data.decode('utf-8')).encode('utf-8')
+                zout.writestr(item, data)
+    return out.getvalue()
+
+
+def _escape(s: str) -> str:
+    return (str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+
+def build_cached_values(ws, result: dict, derived: dict, criteria: list) -> dict:
+    """The Scorecard values we already know, keyed by cell reference."""
+    crit_map = {c['id']: c for c in criteria}
+    items_by_id = derived['items_by_id']
+    values = {}
+
+    item_rows = find_item_rows(ws)
+    for cid, row in item_rows.items():
+        item = items_by_id.get(cid, {})
+        pts = crit_map.get(cid, {}).get('pts', 0)
+        score = item.get('score', 'No')
+        values[f'F{row}'] = pts if score == 'Yes' else (pts / 2.0 if score == 'Half' else 0)
+
+    summary = find_summary_rows(ws)
+    musts = derived.get('must_failures') or []
+    mapping = {
+        'points_scored':   round(float(derived['total_scored']), 1),
+        'score_100':       float(derived['total_score']),
+        'must_count':      len(musts),
+        'must_list':       ', '.join(musts) if musts else 'None',
+        'result':          derived['verdict'],
+        'recording_valid': 'YES' if not result.get('scoring', {}).get('recording_invalid') else
+                           'NO — not accepted',
     }
-    for sid, row in section_data_rows.items():
-        s = derived['sections'].get(sid, {})
-        safe_set(ws, f'D{row}', s.get('applicable', 0))
-        safe_set(ws, f'E{row}', s.get('scored', 0))
-        pct = s.get('coverage_pct', 'N/A')
-        safe_set(ws, f'F{row}', pct)
-    print("Filled section subtotals (rows 52-59)")
-
-    # ── Summary rows 72-75 (replace formulas with values) ─────────────────
-    safe_set(ws, 'E72', derived['total_score'])
-    safe_set(ws, 'E73', derived['knockout_status'])
-    safe_set(ws, 'E74', derived['grade_band'])
-    safe_set(ws, 'E75', derived['verdict'])
-    print(f"Score={derived['total_score']} | {derived['grade_band']} | {derived['verdict']}")
+    for key, val in mapping.items():
+        if key in summary:
+            values[f'C{summary[key]}'] = val
+    return values
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CALL SUMMARY SHEET
-# ─────────────────────────────────────────────────────────────────────────────
+def link_my_result_evidence(ws, scorecard_name: str):
+    """
+    The My Result sheet is entirely formula-driven off Scorecard, so the only
+    thing to add is an evidence column that follows the same pattern.
+    """
+    from openpyxl.styles import Font
 
-def fill_call_summary(wb, evaluation_data: Dict[str, Any], derived: Dict[str, Any]):
-    """Fill the Call Summary sheet."""
-    if 'Call Summary' not in wb.sheetnames:
-        print("WARNING: Call Summary sheet not found")
-        return
-
-    ws = wb['Call Summary']
-    cs = evaluation_data.get('ai_evaluation', {}).get('call_summary', {})
-    if not cs:
-        print("WARNING: No call_summary data")
-        return
-
-    header_info = evaluation_data.get('ai_evaluation', {}).get('header_info', {})
-    evaluated_at = evaluation_data.get('evaluated_at', datetime.utcnow().isoformat())
+    item_rows = find_item_rows(ws)
+    if not item_rows:
+        return 0
+    # Each checklist row already pulls its note from Scorecard via a formula;
+    # mirror that for evidence instead of copying values in.
+    written = 0
+    for _cid, row in item_rows.items():
+        src = ws.cell(row=row, column=6).value  # col F: =IF(Scorecard!G11="","",Scorecard!G11)
+        m = re.search(r"Scorecard!G(\d+)", str(src or ''))
+        if not m:
+            continue
+        cell = ws.cell(row=row, column=7)
+        if isinstance(cell, MergedCell):
+            continue
+        cell.value = f'=IF(Scorecard!I{m.group(1)}="","",Scorecard!I{m.group(1)})'
+        written += 1
+    header_row = min(item_rows.values()) - 2
+    hdr = ws.cell(row=header_row, column=7)
+    if not isinstance(hdr, MergedCell):
+        hdr.value = 'Evidence — timestamp & exact words'
+        hdr.font = Font(bold=True)
     try:
-        date_str = datetime.fromisoformat(evaluated_at.replace('Z', '')).strftime('%d-%b-%Y')
-    except:
-        date_str = datetime.utcnow().strftime('%d-%b-%Y')
-
-    # ── Header rows 4-8: replace cross-sheet formulas with values ─────────
-    # C4=AppID, G4=Score, C5=Customer, G5=Grade, C6=BCM, G6=KnockoutStatus
-    # C7=Date, G7=Verdict, C8=LoanAmount, G8=Duration
-    safe_set(ws, 'C4', header_info.get('application_id_mentioned', 'N/A'))
-    safe_set(ws, 'G4', derived['total_score'])
-    safe_set(ws, 'C5', header_info.get('customer_name_mentioned', 'N/A'))
-    safe_set(ws, 'G5', derived['grade_band'])
-    safe_set(ws, 'C6', header_info.get('bcm_rcm_name_mentioned', 'N/A'))
-    safe_set(ws, 'G6', derived['knockout_status'])
-    safe_set(ws, 'C7', date_str)
-    safe_set(ws, 'G7', derived['verdict'])
-    safe_set(ws, 'C8', header_info.get('loan_amount_mentioned', 'N/A'))
-    safe_set(ws, 'G8', header_info.get('duration_mentioned', 'N/A'))
-    print("Call Summary header filled")
-
-    # ── Executive gist A13 ────────────────────────────────────────────────
-    gist = cs.get('executive_gist', '')
-    if gist:
-        safe_set(ws, 'A13', gist)
-        print(f"Executive gist: {len(gist)} chars")
-
-    # ── Income rows 21-28 ─────────────────────────────────────────────────
-    streams = cs.get('income_streams', [])
-    for i, stream in enumerate(streams[:8]):
-        row = 21 + i
-        if not isinstance(stream, dict):
-            safe_set(ws, f'B{row}', str(stream))
-            continue
-        safe_set(ws, f'B{row}', stream.get('description', ''))
-        safe_set(ws, f'C{row}', stream.get('run_by', ''))
-        safe_set(ws, f'D{row}', stream.get('stated_on_call', ''))
-        if stream.get('stated_monthly') is not None:
-            safe_set(ws, f'E{row}', stream['stated_monthly'])
-        if stream.get('assessed_monthly') is not None:
-            safe_set(ws, f'F{row}', stream['assessed_monthly'])
-        safe_set(ws, f'G{row}', stream.get('proof_cited', ''))
-        safe_set(ws, f'H{row}', stream.get('timestamp_remarks', ''))
-
-    # Income totals row 29: replace =SUM formulas with computed values
-    inc_sum = cs.get('income_summary', {})
-    total_stated = inc_sum.get('total_stated') or sum(
-        s.get('stated_monthly') or 0 for s in streams if isinstance(s, dict)
-    ) or None
-    total_assessed = derived['total_income'] or None
-    if total_stated:
-        safe_set(ws, 'E29', total_stated)
-    if total_assessed:
-        safe_set(ws, 'F29', total_assessed)
-
-    safe_set(ws, 'B30', inc_sum.get('missed_streams', ''))
-    safe_set(ws, 'C31', inc_sum.get('all_sources_covered', ''))
-    print(f"Income: {len(streams)} streams | stated={total_stated} | assessed={total_assessed}")
-
-    # ── Obligations rows 36-43 ────────────────────────────────────────────
-    obligations = cs.get('obligations', [])
-    for i, ob in enumerate(obligations[:8]):
-        row = 36 + i
-        if not isinstance(ob, dict):
-            safe_set(ws, f'B{row}', str(ob))
-            continue
-        safe_set(ws, f'B{row}', ob.get('lender_type', ''))
-        safe_set(ws, f'C{row}', ob.get('borrower_name', ''))
-        if ob.get('outstanding') is not None:
-            safe_set(ws, f'E{row}', ob['outstanding'])
-        if ob.get('emi_monthly') is not None:
-            safe_set(ws, f'F{row}', ob['emi_monthly'])
-        safe_set(ws, f'G{row}', ob.get('in_bureau', ''))
-        safe_set(ws, f'H{row}', ob.get('timestamp_remarks', ''))
-
-    # Obligations totals row 44: replace =SUM formulas
-    ob_sum = cs.get('obligations_summary', {})
-    total_outstanding = ob_sum.get('total_outstanding') or sum(
-        o.get('outstanding') or 0 for o in obligations if isinstance(o, dict)
-    ) or None
-    total_emi_val = derived['total_emi'] or None
-    if total_outstanding:
-        safe_set(ws, 'E44', total_outstanding)
-    if total_emi_val:
-        safe_set(ws, 'F44', total_emi_val)
-
-    safe_set(ws, 'C45', ob_sum.get('undisclosed_found', ''))
-    safe_set(ws, 'C46', ob_sum.get('recent_enquiries', ''))
-    print(f"Obligations: {len(obligations)} | outstanding={total_outstanding} | emi={total_emi_val}")
-
-    # ── Family rows 51-56 ─────────────────────────────────────────────────
-    members = cs.get('family_members', [])
-    for i, member in enumerate(members[:6]):
-        row = 51 + i
-        if not isinstance(member, dict):
-            safe_set(ws, f'B{row}', str(member))
-            continue
-        safe_set(ws, f'B{row}', member.get('name', ''))
-        safe_set(ws, f'C{row}', member.get('relation', ''))
-        if member.get('age') is not None:
-            safe_set(ws, f'D{row}', member['age'])
-        safe_set(ws, f'E{row}', member.get('occupation', ''))
-        safe_set(ws, f'F{row}', member.get('met_in_person', ''))
-        safe_set(ws, f'G{row}', member.get('aware_of_loan', ''))
-        safe_set(ws, f'H{row}', member.get('remarks', ''))
-
-    fam = cs.get('family_summary', {})
-    if fam.get('family_size') is not None:
-        safe_set(ws, 'C57', fam['family_size'])
-    if fam.get('dependents_count') is not None:
-        safe_set(ws, 'C58', fam['dependents_count'])
-    if fam.get('earning_members') is not None:
-        safe_set(ws, 'C59', fam['earning_members'])
-    if fam.get('monthly_expense') is not None:
-        safe_set(ws, 'C60', fam['monthly_expense'])
-    safe_set(ws, 'C61', fam.get('co_borrower_name', ''))
-    safe_set(ws, 'C62', fam.get('co_borrower_aware', ''))
-    print(f"Family: {len(members)} members | size={fam.get('family_size')} | expense={fam.get('monthly_expense')}")
-
-    # ── Repayment snapshot rows 65-72: replace formulas with computed values
-    safe_set(ws, 'E65', derived['total_income'] or '')
-    safe_set(ws, 'E66', derived['monthly_expense'] or '')
-    safe_set(ws, 'E67', derived['total_emi'] or '')
-    safe_set(ws, 'E68', derived['monthly_surplus'] or '')
-    # E69 = proposed EMI (user fills manually, leave blank)
-    # E70 = surplus cover — leave blank (needs proposed EMI)
-    # E71 = FOIR — leave blank (needs proposed EMI)
-    print(f"Repayment: income={derived['total_income']} expense={derived['monthly_expense']} EMI={derived['total_emi']} surplus={derived['monthly_surplus']}")
-
-    # ── Other key facts C75:C82 ───────────────────────────────────────────
-    facts = cs.get('other_key_facts', {})
-    if facts:
-        safe_set(ws, 'C75', facts.get('end_use', ''))
-        safe_set(ws, 'C76', facts.get('collateral_details', ''))
-        safe_set(ws, 'C77', facts.get('neighbour_checks', ''))
-        safe_set(ws, 'C78', facts.get('red_flags', ''))
-        safe_set(ws, 'C79', facts.get('discrepancies', ''))
-        safe_set(ws, 'C80', facts.get('bcm_recommendation', ''))
-        safe_set(ws, 'C81', facts.get('evaluators_note', ''))
-
-        red_flags = facts.get('red_flags', '')
-        bcm_rec = facts.get('bcm_recommendation', '')
-        needs_attention = ('PD-RF' in red_flags or 'NOT STATED' in bcm_rec.upper()
-                          or 'INVALID' in bcm_rec.upper())
-        safe_set(ws, 'C82', 'YES — route to RCM/CCRO with the note above' if needs_attention else 'NO')
-        print("Other key facts filled")
-
-    print("Call Summary complete")
+        ws.column_dimensions['G'].width = 60
+    except Exception:
+        pass
+    print(f"  My Result evidence links: {written}")
+    return written
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GAP & COACHING REPORT SHEET
-# ─────────────────────────────────────────────────────────────────────────────
 
-def fill_gap_report(wb, evaluation_data: Dict[str, Any], derived: Dict[str, Any]):
-    """
-    Fill the Gap & Coaching Report sheet.
-    The template has formulas referencing Scorecard — we replace them with computed values
-    so the sheet shows correctly without Excel recalculation.
-    """
-    sheet_name = next((n for n in wb.sheetnames if 'GAP' in n.upper()), None)
-    if not sheet_name:
-        print("WARNING: Gap report sheet not found")
-        return
-
-    ws = wb[sheet_name]
-    criteria = evaluation_data.get('ai_evaluation', {}).get('criteria', [])
-    criteria_by_id = {c['id']: c for c in criteria}
-
-    # ── Score section rows 4-5 ────────────────────────────────────────────
-    safe_set(ws, 'C4', derived['total_score'])
-    safe_set(ws, 'C5', derived['points_to_90'])
-    print(f"Gap report score: {derived['total_score']} | points to 90+: {derived['points_to_90']}")
-
-    # ── Gates rows 8-15 ──────────────────────────────────────────────────
-    gate_order = ['K1','K2','K3','K4','K5','K6','K7','K8']
-    gate_requirements = {
-        'K1': 'Valid recording — ≥ 15 minutes (MANDATORY), not beyond 30; audible; recorded the SAME DAY as the visits, after all sites were covered.',
-        'K2': 'The BCM personally met the MAIN BORROWER at the business premises — not by phone, not through a relative or third party.',
-        'K3': 'EVERY declared income-generating business/site physically visited (all streams; dairy shed and agri land included where considered).',
-        'K4': 'Residence AND collateral visited (or confirmed same site); family members and the co-borrower spoken to.',
-        'K5': 'Neighbour verification done — at least 2 business neighbours and 2 residence neighbours enquired, names/contacts collected.',
-        'K6': 'No staged/fake setup left unreported — any suspicion stated and escalated, not smoothed over.',
-        'K7': 'Collateral papers physically seen — original title documents sighted (or exact status stated), actual owner identified.',
-        'K8': 'Narration consistent with geo-tagged photographs and documents uploaded on PRAGATI — no material contradiction.',
-    }
-    for i, gid in enumerate(gate_order):
-        row = 8 + i
-        status = derived['gate_results'].get(gid, 'PASS')
-        safe_set(ws, f'A{row}', gid)
-        if status == 'FAIL':
-            safe_set(ws, f'B{row}', f"GATE FAILED — {gate_requirements[gid]}")
-        else:
-            safe_set(ws, f'B{row}', '—')
-        safe_set(ws, f'C{row}', status)
-
-    # ── Gap items rows 18-48 ─────────────────────────────────────────────
-    # Template has one row per criterion (30 rows = rows 18-47, plus row 48 for H3)
-    criteria_order = [
-        'A1','A2','A3','A4',
-        'B1','B2','B3','B4','B5','B6',
-        'C1','C2','C3',
-        'D1','D2','D3','D4',
-        'E1','E2','E3','E4',
-        'F1','F2','F3','F4',
-        'G1','G2','G3',
-        'H1','H2','H3',
-    ]
-    # Criterion checklist text for "Cover:" guidance
-    checklist_text = {
-        'A1': 'Application ID, customer name, village/town, product, loan amount — stated at start; confirm bureau/PRAGATI prep.',
-        'A2': 'Date/time of each visit, who was met, who accompanied; borrower met personally at business.',
-        'A3': 'Geo-tagged photos — premises, signboard, stock, bills, neighbour signboards, ELSI assets — confirmed taken & uploaded.',
-        'A4': 'Recorded same day after all visits; 15–30 minutes total.',
-        'B1': 'For EACH income stream: premises, stock, staff, foot traffic, equipment, signboard — concrete observations + documented.',
-        'B2': 'Borrower personally showed the business; day-to-day operations explained on site.',
-        'B3': 'Daily/monthly sales, annual turnover, margin %, seasonality — PRAGATI-model arithmetic aloud; totals stated.',
-        'B4': 'Bills/UPI/passbook asked, produced, photographed; absence stated honestly. AA completeness confirmed.',
-        'B5': '2+ neighbouring businesses spoken to — names/contacts, signboards photographed; substance of what they said.',
-        'B6': 'Explicit view per stream that setup is genuine (own stock, truly operating) — or suspicion escalated (PD-RF-1).',
-        'C1': 'Land seen (or GPS video); owner named, checked on Bhulekh/SatSure; acreage stated. Leased land ≠ agri income.',
-        'C2': 'Crops per season, what is standing/sown; mandi receipts (last 4 seasons avg) or sale proof examined.',
-        'C3': 'Actually cultivating? KCC limit/obligation noted. False agri claim = PD-RF-5.',
-        'D1': 'ALL EMIs of borrower AND co-borrowers — every CRIF/CIBIL loan, MFI/SHG/KCC/gold/hand loans — lender + monthly amount each.',
-        'D2': 'Family size, dependents, Rs.2,000–3,000/member norm, ELSI living standard consistent with income.',
-        'D3': 'Income − expenses − EMIs = surplus vs proposed EMI; disposable floor checked aloud.',
-        'D4': 'Loan enquiries last 3 months — lender, amount, purpose, and OUTCOME of each; cross-checked with bureau.',
-        'E1': 'Ownership, years at address, construction/condition, household assets; utility bills/Patta; ELSI photos uploaded.',
-        'E2': 'Each person named + loan awareness, end use, repayment intent; co-borrower MANDATORILY met in person + mortgage-aware; Samagra KYC checked.',
-        'E3': '2+ residence neighbours — names/contacts; reputation, conduct, any adverse information.',
-        'E4': 'Confirmed told: Business LAP, indicative EMI, Clean Track Reward, ZERO COMMISSION policy.',
-        'F1': 'Type, self-occupied/rented, construction quality, age (20-yr rule), carpet area vs 400/100 sq.ft, independent access, kitchen/toilet.',
-        'F2': 'Original title deeds sighted (or exact status stated), owner named, acquisition story, mutation, heirs/NOC.',
-        'F3': 'Value estimate with basis (local rates, transactions, neighbour input); LTV sense; distress-value view (80% cap).',
-        'F4': 'Lien-free, no dispute, not ST/tribal, not near HT line/riverbank/encroachment, no negative zone, no demolition risk.',
-        'G1': 'Stated purpose vs ground reality; how much/where/when questioned; not a restricted use.',
-        'G2': 'Total income vs loan sought; capacity AND intent view; every red flag found — or explicit statement none found.',
-        'G3': 'Recommend/with conditions/reject — with specific reasons. Borrower told decision timeline.',
-        'H1': 'Section order followed; names, numbers, observations — no vague filler.',
-        'H2': '15–30 minutes, single continuous recording, ≥90% intelligible.',
-        'H3': 'Facts vs opinion separated; what could not be verified stated; discrepancies flagged.',
-    }
-
-    # Criterion name lookup from our own definition
-    CRITERIA_NAMES = {
-        'A1': 'Case identified on record', 'A2': 'All visits confirmed — when and whom',
-        'A3': 'Photo/document capture confirmed', 'A4': 'Same-day recording, correct duration',
-        'B1': 'Every business visited and described as seen', 'B2': 'Borrower met at business; operations explained on site',
-        'B3': 'Income assessed per stream with arithmetic', 'B4': 'Income documents asked and examined',
-        'B5': 'Business-neighbour enquiry narrated', 'B6': 'Genuineness view — no staged setup',
-        'C1': 'Land visited; ownership and acreage verified', 'C2': 'Crops and yield verified with proof',
-        'C3': 'Cultivation genuineness + KCC noted',
-        'D1': 'All obligations enumerated with amounts', 'D2': 'Family expenses and lifestyle assessed',
-        'D3': 'Surplus arithmetic narrated', 'D4': 'Recent loan enquiries (last 3 months) probed with outcomes',
-        'E1': 'Residence visited and described', 'E2': 'Family and co-borrower interviewed',
-        'E3': 'Residence-neighbour enquiry narrated', 'E4': 'Customer education confirmed',
-        'F1': 'Collateral visited and physically described', 'F2': 'Original papers seen; owner and title chain',
-        'F3': 'Approximate market value with basis', 'F4': 'Risk screen stated',
-        'G1': 'End use verified on ground', 'G2': 'Overall credit view',
-        'G3': 'Clear recommendation with reasons',
-        'H1': 'Structured and specific', 'H2': 'Duration and audibility', 'H3': 'Honest flagging of gaps',
-    }
-
-    for i, cid in enumerate(criteria_order):
-        row = 18 + i
-        c = criteria_by_id.get(cid, {})
-        coverage = c.get('coverage', 'None')
-        max_pts = CRITERIA_MAX_PTS.get(cid, 0)
-        criterion_name = CRITERIA_NAMES.get(cid, cid)
-
-        safe_set(ws, f'A{row}', cid)
-
-        if coverage == 'None':
-            safe_set(ws, f'B{row}', f"NOT NARRATED — {criterion_name} | Cover: {checklist_text.get(cid, '')}")
-            safe_set(ws, f'C{row}', max_pts)
-        elif coverage == 'Partial':
-            safe_set(ws, f'B{row}', f"INCOMPLETE — {criterion_name} | Asked but not fully probed/confirmed.")
-            safe_set(ws, f'C{row}', max_pts / 2.0)
-        elif coverage == 'N/A':
-            safe_set(ws, f'B{row}', '—')
-            safe_set(ws, f'C{row}', '')
-        else:  # Full
-            safe_set(ws, f'B{row}', '')
-            safe_set(ws, f'C{row}', '')
-
-    # ── Total points lost row 49 ─────────────────────────────────────────
-    safe_set(ws, 'C49', derived['total_points_lost'])
-    print(f"Gap report: {len(derived['gap_items'])} gaps | total lost={derived['total_points_lost']}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# LAMBDA HANDLER
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Lambda handler ────────────────────────────────────────────────────────────
 
 def lambda_handler(event, context):
+    print(f"Excel request: {json.dumps(event)}")
     try:
-        print(f"Excel request: {json.dumps(event)}")
-
-        evaluation_id = event['evaluation_id']
-        result_s3_key = event['result_s3_key']
-        created_at    = event.get('created_at')
+        evaluation_id  = event['evaluation_id']
+        result_s3_key  = event['result_s3_key']
+        created_at     = event.get('created_at')
+        call_type_hint = event.get('call_type', '')
 
         # Mark generating
         table = dynamodb.Table(DYNAMODB_TABLE)
         table.update_item(
             Key={'evaluation_id': evaluation_id, 'created_at': created_at},
-            UpdateExpression='SET #status = :s, excel_generation_started_at = :t',
-            ExpressionAttributeNames={'#status': 'status'},
+            UpdateExpression='SET #s = :s, excel_generation_started_at = :t',
+            ExpressionAttributeNames={'#s': 'status'},
             ExpressionAttributeValues={':s': 'EXCEL_GENERATING', ':t': datetime.utcnow().isoformat()}
         )
 
-        # Load evaluation result
+        # ── Load evaluation result ────────────────────────────────────────────
         resp = s3_client.get_object(Bucket=REPORTS_BUCKET, Key=result_s3_key)
-        evaluation_data = json.loads(resp['Body'].read())
+        result = json.loads(resp['Body'].read())
 
-        # Download template
-        print(f"Downloading template: s3://{TEMPLATE_BUCKET}/{TEMPLATE_KEY}")
-        tmpl = s3_client.get_object(Bucket=TEMPLATE_BUCKET, Key=TEMPLATE_KEY)
-        template_bytes = tmpl['Body'].read()
+        # ── Determine call type ───────────────────────────────────────────────
+        call_type = (
+            result.get('call_type') or
+            call_type_hint or
+            'BCM_PHYSICAL_PD'
+        )
+        # Normalise legacy / shorthand values
+        ct_map = {
+            'BCM': 'BCM_PHYSICAL_PD', 'BCM_PD': 'BCM_PHYSICAL_PD',
+            'BM':  'BM_AUDIO_FI',     'BM_FI':  'BM_AUDIO_FI',
+            'RCM': 'RCM_AUDIO_PD',    'RCM_PD': 'RCM_AUDIO_PD', 'RCM_TELE_PD': 'RCM_AUDIO_PD',
+        }
+        call_type = ct_map.get(call_type, call_type)
+        result['call_type'] = call_type
+        print(f"Call type: {call_type}")
 
-        # Pre-compute all derived values
-        # Use scores already calculated by evaluation Lambda where available,
-        # only recompute what is needed for Excel filling (section subtotals, gap items etc.)
-        derived = compute_derived(evaluation_data)
-        
-        # Override total_score/grade_band/verdict with what evaluation Lambda stored
-        # to keep Excel consistent with DynamoDB and history page
-        stored_scoring = evaluation_data.get('scoring', {})
-        if stored_scoring.get('total_score') is not None:
-            stored_score = float(stored_scoring['total_score'])
-            derived['total_score'] = stored_score
-            derived['points_to_90'] = max(0, round(90 - stored_score, 1))
-        if stored_scoring.get('grade_band'):
-            derived['grade_band'] = stored_scoring['grade_band']
-        if stored_scoring.get('verdict'):
-            derived['verdict'] = stored_scoring['verdict']
-        if stored_scoring.get('gate_results'):
-            derived['gate_results'] = stored_scoring['gate_results']
-        
-        print(f"Derived: score={derived['total_score']} | {derived['grade_band']} | gaps={len(derived['gap_items'])}")
+        # Results written before versioning carry no version: they were scored
+        # on the legacy templates and must be regenerated into those.
+        version = scorecards.resolve_version(result.get('scorecard_version')
+                                             or event.get('scorecard_version'))
+        rubric = scorecards.config(call_type, version)
+        print(f"Scorecard version: {version} ({scorecards.label(version)})")
+        criteria, section_pts, section_names = get_config(call_type, version)
 
-        # Load workbook
+        # ── Items from the result ─────────────────────────────────────────────
+        items = result.get('items', [])
+        if not items:
+            raise ValueError("No items found in evaluation result — cannot generate scorecard")
+
+        # ── Compute derived scores ────────────────────────────────────────────
+        derived = compute_scores(items, criteria, section_pts, section_names)
+        derived['template_warnings'] = []
+        # The evaluation Lambda's scoring is authoritative — it is the one the
+        # UI shows and the one aligned to the template formulas. Recomputing it
+        # here a second way is how the sheet and the dashboard end up
+        # disagreeing, so prefer the stored values and only fall back when an
+        # older result has none.
+        stored = result.get('scoring') or {}
+        if stored.get('total_score') is not None:
+            derived['total_score'] = float(stored['total_score'])
+            derived['grade']       = stored.get('grade', derived['grade'])
+            derived['verdict']     = stored.get('verdict', derived['verdict'])
+        print(f"Score: {derived['total_score']} | {derived['grade']} | must_failures={derived['must_failures']}")
+        if result.get('needs_review'):
+            print(f"Evaluation flagged NEEDS REVIEW: {result.get('review_reasons')}")
+
+        # ── Load template ─────────────────────────────────────────────────────
+        template_key = rubric['template_s3_key']
+        print(f"Template: s3://{TEMPLATE_BUCKET}/{template_key}")
+        tmpl_obj      = s3_client.get_object(Bucket=TEMPLATE_BUCKET, Key=template_key)
+        template_bytes = tmpl_obj['Body'].read()
+
         wb = openpyxl.load_workbook(BytesIO(template_bytes))
+        print(f"Sheets: {wb.sheetnames}")
 
-        # Fill all sheets
-        fill_scorecard(wb['Scorecard'], evaluation_data, derived)
-        fill_call_summary(wb, evaluation_data, derived)
-        fill_gap_report(wb, evaluation_data, derived)
+        # ── Find the two sheets ───────────────────────────────────────────────
+        # Scorecard sheet: first sheet that has "SCORE" in its name, else wb.sheetnames[0]
+        scorecard_name = next(
+            (n for n in wb.sheetnames if 'SCORE' in n.upper()), wb.sheetnames[0]
+        )
+        # My Result sheet: sheet with "RESULT" or "MY" in its name
+        my_result_name = next(
+            (n for n in wb.sheetnames if 'RESULT' in n.upper() or 'MY' in n.upper()),
+            wb.sheetnames[1] if len(wb.sheetnames) > 1 else None
+        )
 
-        # Save
+        print(f"Scorecard sheet: '{scorecard_name}' | My Result sheet: '{my_result_name}'")
+
+        # ── Fill Scorecard (inputs only — every formula is left to Excel) ─────
+        fill_scorecard(wb[scorecard_name], result, derived, criteria, call_type,
+                       rubric.get('e6_input'))
+
+        # ── My Result is entirely formula-driven; only link the evidence column ─
+        if my_result_name:
+            link_my_result_evidence(wb[my_result_name], scorecard_name)
+        else:
+            print("  WARNING: My Result sheet not found — skipping")
+
+        # ── Save workbook ─────────────────────────────────────────────────────
+        cached = build_cached_values(wb[scorecard_name], result, derived, criteria)
         output = BytesIO()
         wb.save(output)
+        # Formulas alone render blank outside desktop Excel, so give the cells
+        # we can compute a cached result while leaving the formulas in place.
+        xlsx = output.getvalue()
+        try:
+            xlsx = cache_formula_values(xlsx, scorecard_name, cached)
+            print(f"  Cached values injected for {len(cached)} formula cells")
+        except Exception as ex:
+            print(f"  Value caching skipped ({ex}) — formulas will compute on open")
+        output = BytesIO(xlsx)
         output.seek(0)
 
-        app_id = evaluation_data.get('application_id', evaluation_id)
+        app_id    = result.get('application_id', evaluation_id)
+        ct_label  = {'BCM_PHYSICAL_PD': 'BCM_PD', 'BM_AUDIO_FI': 'BM_FI', 'RCM_AUDIO_PD': 'RCM_PD'}.get(call_type, call_type)
         excel_key = f"evaluations/{evaluation_id}/scorecard.xlsx"
+        ver_tag   = '' if version == scorecards.LEGACY_VERSION else f"_{scorecards.label(version)}"
+        filename  = f"{ct_label}_Scorecard{ver_tag}_{app_id}_{datetime.utcnow().strftime('%d%b%Y')}.xlsx"
+
         s3_client.put_object(
             Bucket=REPORTS_BUCKET,
             Key=excel_key,
             Body=output.getvalue(),
             ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            ContentDisposition=f'attachment; filename="Audio_PD_Scorecard_{app_id}.xlsx"'
+            ContentDisposition=f'attachment; filename="{filename}"',
         )
-        print(f"Excel saved: s3://{REPORTS_BUCKET}/{excel_key}")
+        print(f"Excel saved: {excel_key} ({filename})")
 
-        if created_at:
-            table.update_item(
-                Key={'evaluation_id': evaluation_id, 'created_at': created_at},
-                UpdateExpression='SET excel_s3_key = :k, #status = :s, completed_at = :t, total_score = :sc, grade_band = :gb, verdict = :v',
-                ExpressionAttributeNames={'#status': 'status'},
-                ExpressionAttributeValues={
-                    ':k': excel_key,
-                    ':s': 'COMPLETED',
-                    ':t': datetime.utcnow().isoformat(),
-                    ':sc': Decimal(str(derived['total_score'])),
-                    ':gb': derived['grade_band'],
-                    ':v': derived['verdict'],
-                }
-            )
-            print(f"DynamoDB synced: score={derived['total_score']} | {derived['grade_band']}")
+        # ── Update DynamoDB ───────────────────────────────────────────────────
+        table.update_item(
+            Key={'evaluation_id': evaluation_id, 'created_at': created_at},
+            UpdateExpression=(
+                'SET excel_s3_key = :k, #s = :s, completed_at = :t, '
+                'total_score = :sc, grade_band = :gb, verdict = :v, call_type = :ct, '
+                'template_warnings = :tw, scorecard_version = :sv'
+            ),
+            ExpressionAttributeNames={'#s': 'status'},
+            ExpressionAttributeValues={
+                ':k':  excel_key,
+                ':s':  'COMPLETED',
+                ':t':  datetime.utcnow().isoformat(),
+                ':sc': Decimal(str(derived['total_score'])),
+                ':gb': derived['grade'],
+                ':v':  derived['verdict'],
+                ':ct': call_type,
+                ':tw': derived.get('template_warnings', []),
+                ':sv': version,
+            }
+        )
+        print(f"DynamoDB updated: COMPLETED | score={derived['total_score']} | {derived['grade']}")
 
         return {
             'statusCode': 200,
-            'body': json.dumps({'evaluation_id': evaluation_id, 'excel_s3_key': excel_key,
-                                'message': 'Excel scorecard generated successfully'})
+            'body': json.dumps({
+                'evaluation_id': evaluation_id,
+                'excel_s3_key':  excel_key,
+                'call_type':     call_type,
+                'total_score':   derived['total_score'],
+                'grade':         derived['grade'],
+                'message':       'Excel scorecard generated successfully',
+            })
         }
 
     except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Excel generator error: {e}")
+        import traceback; traceback.print_exc()
+        try:
+            dynamodb.Table(DYNAMODB_TABLE).update_item(
+                Key={'evaluation_id': event['evaluation_id'], 'created_at': event.get('created_at')},
+                UpdateExpression='SET #s = :s, error_message = :e',
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':s': 'EXCEL_FAILED', ':e': str(e)}
+            )
+        except Exception:
+            pass
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e), 'evaluation_id': event.get('evaluation_id')})

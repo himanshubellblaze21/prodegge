@@ -64,8 +64,22 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "      excel-generator package built" -ForegroundColor Green
 
-# Evaluation lambda is pure Python stdlib + boto3 (Lambda runtime provides boto3)
-# Terraform archive_file will zip lambda/ dirs directly — no pre-build needed
+# Build evaluation package (handler + scorecard registry)
+python create_evaluation_package.py
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to build evaluation package." -ForegroundColor Red
+    exit 1
+}
+Write-Host "      evaluation package built" -ForegroundColor Green
+
+# Build pdf-export package (Linux wheels for numpy / uharfbuzz)
+python create_pdf_package.py
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to build pdf-export package." -ForegroundColor Red
+    exit 1
+}
+Write-Host "      pdf-export package built" -ForegroundColor Green
+
 Write-Host "      Other lambda packages will be zipped by Terraform" -ForegroundColor Green
 Write-Host ""
 

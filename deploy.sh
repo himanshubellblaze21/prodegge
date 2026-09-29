@@ -37,6 +37,10 @@ echo ""
 echo "[2/5] Building Lambda packages..."
 python create_excel_package.py
 echo "      excel-generator package built"
+python create_evaluation_package.py
+echo "      evaluation package built"
+python create_pdf_package.py
+echo "      pdf-export package built"
 echo "      Other lambda packages will be zipped by Terraform"
 echo ""
 

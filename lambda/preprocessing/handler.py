@@ -1,246 +1,162 @@
-import json
-import boto3
-import os
+"""
+Preprocessing Lambda — Prodigee Finance V2.1
+Triggered by S3 ObjectCreated event when audio is uploaded.
+
+Key behaviour:
+- Accepts all common audio formats including raw AAC (.aac)
+- For formats Transcribe cannot process (aac, opus, wma, 3gp):
+  uses ffmpeg (/opt/bin/ffmpeg from Lambda layer) to convert to MP3
+  and re-uploads the MP3 to S3, then triggers transcription on the MP3
+- Passes call_type, application_id, language_code to transcription Lambda
+"""
+import json, boto3, os, subprocess, tempfile
 from datetime import datetime
 from decimal import Decimal
 
-# Initialize AWS clients
-s3_client = boto3.client('s3')
-dynamodb = boto3.resource('dynamodb')
+s3_client    = boto3.client('s3')
+dynamodb     = boto3.resource('dynamodb')
 lambda_client = boto3.client('lambda')
 
-# Environment variables
 RECORDINGS_BUCKET = os.environ['RECORDINGS_BUCKET']
-DYNAMODB_TABLE = os.environ['DYNAMODB_TABLE']
-TRANSCRIPTION_LAMBDA = os.environ.get('TRANSCRIPTION_LAMBDA_NAME', 'audio-pd-transcription-dev')
+DYNAMODB_TABLE    = os.environ['DYNAMODB_TABLE']
+FFMPEG_PATH       = '/opt/bin/ffmpeg'
 
-# Supported audio formats and constraints
-SUPPORTED_FORMATS = ['mp3', 'wav', 'm4a', 'ogg', 'flac']
-MIN_DURATION_SECONDS = 60      # 1 minute
-MAX_DURATION_SECONDS = 3600    # 60 minutes
-MAX_FILE_SIZE_MB = 500
+# Formats Transcribe accepts natively
+NATIVE_FORMATS = {'mp3', 'wav', 'm4a', 'mp4', 'ogg', 'flac', 'webm', 'amr'}
+# Formats we accept from users but need conversion
+NEEDS_CONVERSION = {'aac', 'opus', 'wma', '3gp', 'caf'}
+# All accepted
+ALL_FORMATS = NATIVE_FORMATS | NEEDS_CONVERSION
+
+
+def convert_to_mp3(bucket: str, source_key: str) -> str:
+    """
+    Download source_key from S3, convert to MP3 via ffmpeg,
+    upload as <base>_converted.mp3, return new S3 key.
+    """
+    ext = source_key.rsplit('.', 1)[-1].lower()
+    with tempfile.TemporaryDirectory() as tmp:
+        input_path  = os.path.join(tmp, f'input.{ext}')
+        output_path = os.path.join(tmp, 'output.mp3')
+
+        print(f"Downloading {source_key} for conversion...")
+        s3_client.download_file(bucket, source_key, input_path)
+        print(f"Downloaded {os.path.getsize(input_path)/1024/1024:.1f} MB")
+
+        cmd = [FFMPEG_PATH, '-y', '-i', input_path,
+               '-codec:a', 'libmp3lame', '-qscale:a', '4', output_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            raise Exception(f"ffmpeg failed: {result.stderr[-500:]}")
+        print(f"Converted to MP3: {os.path.getsize(output_path)/1024/1024:.1f} MB")
+
+        base    = source_key.rsplit('.', 1)[0]
+        new_key = f"{base}_converted.mp3"
+        s3_client.upload_file(output_path, bucket, new_key)
+        print(f"Uploaded MP3: {new_key}")
+        return new_key
+
 
 def lambda_handler(event, context):
-    """
-    Preprocessing Lambda for audio validation
-    Triggered by S3 event when audio file is uploaded
-    """
+    print(f"Preprocessing event: {json.dumps(event)}")
     try:
-        print(f"Received event: {json.dumps(event)}")
-        
-        # Handle S3 event format
-        if 'Records' in event:
-            # S3 Event format
-            for record in event['Records']:
-                bucket_name = record['s3']['bucket']['name']
-                recording_key = record['s3']['object']['key']
-                
-                print(f"Processing S3 upload: s3://{bucket_name}/{recording_key}")
-                
-                # Extract evaluation_id from key: recordings/APP123/eval-xxx.mp3
-                parts = recording_key.split('/')
-                if len(parts) < 3:
-                    print(f"Invalid S3 key format: {recording_key}")
-                    continue
-                
-                filename = parts[-1]
-                evaluation_id = filename.split('.')[0]
-                application_id = parts[1]
-                
-                print(f"Extracted: evaluation_id={evaluation_id}, application_id={application_id}")
-                
-                # Query DynamoDB - use evaluation_id as partition key
-                # We need to scan since we don't know created_at yet
-                table = dynamodb.Table(DYNAMODB_TABLE)
-                
-                # Simple approach: scan for this evaluation_id
-                # This is acceptable because we just created it seconds ago
-                response = table.scan(
-                    FilterExpression='evaluation_id = :eval_id',
-                    ExpressionAttributeValues={
-                        ':eval_id': evaluation_id
-                    },
-                    Limit=10
-                )
-                
-                print(f"DynamoDB scan returned {len(response.get('Items', []))} items")
-                
-                if not response.get('Items'):
-                    # Race condition: S3 event fired before ingestion wrote the DynamoDB record.
-                    # Retry up to 5 times with 2-second intervals before giving up.
-                    print(f"DynamoDB record not found for {evaluation_id} — retrying...")
-                    import time
-                    found = False
-                    for attempt in range(1, 6):
-                        time.sleep(2)
-                        retry = table.scan(
-                            FilterExpression='evaluation_id = :eval_id',
-                            ExpressionAttributeValues={':eval_id': evaluation_id},
-                            Limit=10
-                        )
-                        if retry.get('Items'):
-                            item = retry['Items'][0]
-                            created_at = item['created_at']
-                            print(f"Found DynamoDB record on retry {attempt}: created_at={created_at}")
-                            found = True
-                            break
-                        print(f"Retry {attempt}: still not found")
-                    
-                    if not found:
-                        print(f"FATAL: DynamoDB record for {evaluation_id} not found after 5 retries. Skipping.")
-                        continue  # Skip this record — do not invent a created_at
-                else:
-                    item = response['Items'][0]
-                    created_at = item['created_at']
-                    print(f"Found DynamoDB record with created_at: {created_at}")
-                
-                # Process this file
-                result = process_audio_file(
-                    evaluation_id=evaluation_id,
-                    created_at=created_at,
-                    recording_key=recording_key,
-                    bucket_name=bucket_name,
-                    application_id=application_id
-                )
-                
-                print(f"Preprocessing result: {result}")
-        
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'message': 'Processing complete'})
-        }
-        
-    except Exception as e:
-        print(f"Error in preprocessing: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': str(e)})
-        }
+        if 'Records' not in event:
+            return {'statusCode': 200, 'body': 'No S3 records'}
 
+        for record in event['Records']:
+            bucket       = record['s3']['bucket']['name']
+            recording_key = record['s3']['object']['key']
+            print(f"Processing: s3://{bucket}/{recording_key}")
 
-def process_audio_file(evaluation_id, created_at, recording_key, bucket_name, application_id):
-    """Process and validate a single audio file"""
-    try:
-        table = dynamodb.Table(DYNAMODB_TABLE)
-        
-        # Update DynamoDB status
-        table.update_item(
-            Key={
-                'evaluation_id': evaluation_id,
-                'created_at': created_at
-            },
-            UpdateExpression='SET #status = :status, preprocessing_started_at = :timestamp',
-            ExpressionAttributeNames={
-                '#status': 'status'
-            },
-            ExpressionAttributeValues={
-                ':status': 'PREPROCESSING',
-                ':timestamp': datetime.utcnow().isoformat()
-            }
-        )
-        
-        # Get audio file metadata from S3
-        s3_response = s3_client.head_object(
-            Bucket=bucket_name,
-            Key=recording_key
-        )
-        
-        file_size_bytes = s3_response['ContentLength']
-        file_size_mb = file_size_bytes / (1024 * 1024)
-        content_type = s3_response.get('ContentType', '')
-        
-        print(f"File size: {file_size_mb:.2f} MB, Content-Type: {content_type}")
-        
-        # Validate file size
-        if file_size_mb > MAX_FILE_SIZE_MB:
-            raise ValueError(f"File size {file_size_mb:.2f} MB exceeds maximum {MAX_FILE_SIZE_MB} MB")
-        
-        # Validate file format
-        file_extension = recording_key.split('.')[-1].lower()
-        if file_extension not in SUPPORTED_FORMATS:
-            raise ValueError(f"Unsupported audio format: {file_extension}. Supported: {', '.join(SUPPORTED_FORMATS)}")
-        
-        # Estimate duration (rough estimate: ~1MB per minute for MP3)
-        estimated_duration_minutes = file_size_mb
-        print(f"Estimated duration: ~{estimated_duration_minutes:.1f} minutes")
-        
-        # Basic validation passed
-        validation_result = {
-            'file_size_mb': Decimal(str(round(file_size_mb, 2))),
-            'format': file_extension,
-            'estimated_duration_minutes': Decimal(str(round(estimated_duration_minutes, 1))),
-            'content_type': content_type
-        }
-        
-        # Update DynamoDB with preprocessing complete
-        table.update_item(
-            Key={
-                'evaluation_id': evaluation_id,
-                'created_at': created_at
-            },
-            UpdateExpression='SET #status = :status, preprocessing_completed_at = :timestamp, validation_result = :validation',
-            ExpressionAttributeNames={
-                '#status': 'status'
-            },
-            ExpressionAttributeValues={
-                ':status': 'VALIDATED',
-                ':timestamp': datetime.utcnow().isoformat(),
-                ':validation': validation_result
-            }
-        )
-        
-        print(f"Preprocessing completed successfully for {evaluation_id}")
-        
-        # Invoke transcription Lambda
-        lambda_client = boto3.client('lambda')
-        transcription_payload = {
-            'evaluation_id': evaluation_id,
-            'recording_s3_key': recording_key,
-            'created_at': created_at,
-            'bucket_name': bucket_name
-        }
-        
-        print(f"Invoking transcription Lambda with payload: {transcription_payload}")
-        
-        response = lambda_client.invoke(
-            FunctionName=os.environ.get('TRANSCRIPTION_LAMBDA_NAME', 'audio-pd-transcription-dev'),
-            InvocationType='Event',  # Async invocation
-            Payload=json.dumps(transcription_payload)
-        )
-        
-        print(f"Transcription Lambda invoked: StatusCode={response['StatusCode']}")
-        
-        return {
-            'status': 'SUCCESS',
-            'evaluation_id': evaluation_id,
-            'validation_result': validation_result
-        }
-        
-    except Exception as e:
-        print(f"Error processing {evaluation_id}: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        # Update DynamoDB with error
-        try:
+            parts = recording_key.split('/')
+            if len(parts) < 3:
+                print(f"Invalid key format: {recording_key}")
+                continue
+
+            evaluation_id  = parts[-1].split('.')[0]
+            application_id = parts[1]
+
+            # Find DynamoDB record (retry for race condition)
+            table = dynamodb.Table(DYNAMODB_TABLE)
+            item  = None
+            import time
+            for attempt in range(6):
+                resp = table.scan(
+                    FilterExpression='evaluation_id = :eid',
+                    ExpressionAttributeValues={':eid': evaluation_id},
+                    Limit=5
+                )
+                if resp.get('Items'):
+                    item = resp['Items'][0]
+                    break
+                print(f"DynamoDB retry {attempt+1}...")
+                time.sleep(2)
+
+            if not item:
+                print(f"DynamoDB record not found for {evaluation_id} — skipping")
+                continue
+
+            created_at = item['created_at']
+            call_type  = item.get('call_type', 'AUTO_DETECT')
+            lang       = item.get('language_code', 'hi-IN')
+            app_id     = item.get('application_id', application_id)
+
+            # Mark PREPROCESSING
             table.update_item(
-                Key={
-                    'evaluation_id': evaluation_id,
-                    'created_at': created_at
-                },
-                UpdateExpression='SET #status = :status, error_message = :error',
-                ExpressionAttributeNames={
-                    '#status': 'status'
-                },
+                Key={'evaluation_id': evaluation_id, 'created_at': created_at},
+                UpdateExpression='SET #s=:s, preprocessing_started_at=:t',
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':s': 'PREPROCESSING', ':t': datetime.utcnow().isoformat()}
+            )
+
+            # Validate
+            meta     = s3_client.head_object(Bucket=bucket, Key=recording_key)
+            size_mb  = meta['ContentLength'] / (1024 * 1024)
+            ext      = recording_key.rsplit('.', 1)[-1].lower() if '.' in recording_key else ''
+
+            if size_mb > 500:
+                raise ValueError(f"File {size_mb:.0f} MB exceeds 500 MB limit")
+            if ext not in ALL_FORMATS:
+                raise ValueError(f"Format .{ext} not supported. Accepted: {sorted(ALL_FORMATS)}")
+
+            print(f"File: {size_mb:.1f} MB, format: .{ext}")
+
+            # Convert if needed
+            actual_key = recording_key
+            if ext in NEEDS_CONVERSION:
+                print(f".{ext} needs conversion → MP3")
+                actual_key = convert_to_mp3(bucket, recording_key)
+
+            # Mark VALIDATED
+            table.update_item(
+                Key={'evaluation_id': evaluation_id, 'created_at': created_at},
+                UpdateExpression='SET #s=:s, preprocessing_completed_at=:t, recording_s3_key_processed=:k',
+                ExpressionAttributeNames={'#s': 'status'},
                 ExpressionAttributeValues={
-                    ':status': 'PREPROCESSING_FAILED',
-                    ':error': str(e)
+                    ':s': 'VALIDATED', ':t': datetime.utcnow().isoformat(),
+                    ':k': actual_key
                 }
             )
-        except:
-            pass
-        
-        raise
+
+            # Trigger transcription
+            tx_payload = {
+                'evaluation_id':    evaluation_id,
+                'recording_s3_key': actual_key,
+                'created_at':       created_at,
+                'application_id':   app_id,
+                'call_type':        call_type,
+                'language_code':    lang,
+            }
+            resp = lambda_client.invoke(
+                FunctionName=os.environ.get('TRANSCRIPTION_LAMBDA_NAME', 'audio-pd-transcription-dev'),
+                InvocationType='Event',
+                Payload=json.dumps(tx_payload).encode()
+            )
+            print(f"Transcription triggered: {resp['StatusCode']}")
+
+        return {'statusCode': 200, 'body': 'OK'}
+
+    except Exception as e:
+        print(f"Preprocessing error: {e}")
+        import traceback; traceback.print_exc()
+        return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}

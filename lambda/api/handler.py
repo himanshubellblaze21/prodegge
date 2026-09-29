@@ -60,7 +60,7 @@ def generate_presigned_upload(event, context):
         filename = body.get('filename')
         application_id = body.get('application_id')
         customer_name = body.get('customer_name', 'N/A')
-        call_type = body.get('call_type', 'RCM_AUDIO_PD')
+        call_type = body.get('call_type', 'AUTO_DETECT')
         language_code = body.get('language_code', 'hi-IN')
         
         if not filename or not application_id:
@@ -177,7 +177,7 @@ def generate_presigned_upload(event, context):
                     'created_at': created_at,
                     'application_id': application_id,
                     'customer_name': body.get('customer_name', 'N/A'),
-                    'call_type': body.get('call_type', 'RCM_AUDIO_PD'),
+                    'call_type': body.get('call_type', 'AUTO_DETECT'),
                     'language_code': body.get('language_code', 'hi-IN'),
                     'status': 'PENDING_UPLOAD',
                     'recording_s3_key': recording_s3_key,
@@ -248,7 +248,7 @@ def trigger_transcription(event, context):
                 'recording_s3_key': item['recording_s3_key'],
                 'created_at': item['created_at'],
                 'application_id': item.get('application_id'),
-                'call_type': item.get('call_type', 'RCM_AUDIO_PD'),
+                'call_type': item.get('call_type', 'AUTO_DETECT'),
                 'language_code': item.get('language_code', 'hi-IN')
             }
             
@@ -283,7 +283,7 @@ def trigger_transcription(event, context):
                 'recording_s3_key': item['recording_s3_key'],
                 'created_at': item['created_at'],
                 'application_id': item.get('application_id'),
-                'call_type': item.get('call_type', 'RCM_AUDIO_PD'),
+                'call_type': item.get('call_type', 'AUTO_DETECT'),
                 'language_code': item.get('language_code', 'hi-IN')
             }
             
@@ -352,7 +352,12 @@ def get_evaluation_status(event, context):
             'error_message': item.get('error_message'),
             'transcript_s3_key': item.get('transcript_s3_key'),
             'excel_s3_key': item.get('excel_s3_key'),
-            'evaluated_at': item.get('evaluated_at')
+            'evaluated_at': item.get('evaluated_at'),
+            'call_type': item.get('call_type'),
+            'call_type_confidence': item.get('call_type_confidence'),
+            'needs_review': item.get('needs_review', False),
+            'review_reasons': item.get('review_reasons', []),
+            'scorecard_version': item.get('scorecard_version'),
         })
         
     except Exception as e:
@@ -438,14 +443,25 @@ def get_excel_download_url(event, context):
             ExpiresIn=3600
         )
         
-        # Extract filename
+        # Build a descriptive filename based on call type
         application_id = item.get('application_id', evaluation_id)
-        filename = f"Audio_PD_Scorecard_{application_id}.xlsx"
+        call_type = item.get('call_type', 'AUDIO_PD')
+        label_map = {
+            'BCM_PHYSICAL_PD': 'BCM_PD',
+            'BM_AUDIO_FI': 'BM_FI',
+            'RCM_AUDIO_PD': 'RCM_PD',
+        }
+        type_label = label_map.get(call_type, 'AUDIO_PD')
+        # Evaluations without a version were scored on the legacy scorecards.
+        version = item.get('scorecard_version')
+        ver_tag = f"_v{version}" if version not in (None, '', '0') else ''
+        filename = f"{type_label}_Scorecard{ver_tag}_{application_id}.xlsx"
         
         return response(200, {
             'download_url': download_url,
             'filename': filename,
-            'excel_s3_key': excel_key
+            'excel_s3_key': excel_key,
+            'call_type': call_type,
         })
         
     except Exception as e:
@@ -500,6 +516,7 @@ def get_evaluation_detail(event, context):
             'result_s3_key': item.get('result_s3_key'),
             'evaluated_at': item.get('evaluated_at'),
             'error_message': item.get('error_message'),
+            'scorecard_version': item.get('scorecard_version'),
             'result_data': result_data
         })
         

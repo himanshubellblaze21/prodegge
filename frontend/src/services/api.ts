@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { formatTimestamp } from '../lib/format'
 
 const API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT || ''
 
@@ -159,25 +160,81 @@ export async function getExcelDownloadUrl(evaluationId: string) {
   }
 }
 
+// Start a browser download from a presigned S3 URL. The objects are served
+// with Content-Disposition: attachment, so this never navigates away.
+function triggerDownload(url: string, filename?: string) {
+  const link = document.createElement('a')
+  link.href = url
+  if (filename) link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
+
 // Download Excel scorecard
 export async function downloadExcelScorecard(evaluationId: string) {
+  const { download_url, filename } = await getExcelDownloadUrl(evaluationId)
+  triggerDownload(download_url, filename)
+  return { success: true }
+}
+
+// Download the scorecard as PDF (both sheets). The first request for an
+// evaluation renders it, which takes a few seconds; later ones are cached.
+export async function downloadPdfScorecard(evaluationId: string) {
   try {
-    const { download_url, filename } = await getExcelDownloadUrl(evaluationId)
-    
-    // Open in new tab or trigger download
-    const link = document.createElement('a')
-    link.href = download_url
-    link.download = filename
-    link.target = '_blank'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    
+    const response = await apiClient.get(`/evaluations/${evaluationId}/pdf`)
+    const { download_url, filename } = response.data
+    triggerDownload(download_url, filename)
     return { success: true }
   } catch (error: any) {
-    console.error('Download Excel error:', error)
-    throw new Error(error.response?.data?.error || 'Failed to download Excel')
+    console.error('Download PDF error:', error)
+    throw new Error(error.response?.data?.error || 'Failed to download PDF')
   }
+}
+
+// Download the transcript as a UTF-8 text file, one line per segment.
+export async function downloadTranscript(
+  evaluationId: string,
+  meta: { applicationId?: string; customerName?: string; callTypeLabel?: string } = {}
+) {
+  const data = await getTranscript(evaluationId)
+  const text = buildTranscriptText(data, { evaluationId, ...meta })
+  // BOM so Notepad and Excel open the Hindi text as UTF-8.
+  const blob = new Blob(['\uFEFF' + text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const safeId = (meta.applicationId || evaluationId).replace(/[^A-Za-z0-9_.-]+/g, '_')
+  triggerDownload(url, `Transcript_${safeId}.txt`)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return { success: true }
+}
+
+export function speakerName(speakers: Record<string, string> | undefined, id?: string) {
+  if (!id) return 'Speaker'
+  if (speakers?.[id]) return speakers[id]
+  const n = parseInt(id.replace(/\D/g, ''), 10)
+  return Number.isNaN(n) ? id : `Speaker ${n + 1}`
+}
+
+function buildTranscriptText(
+  data: any,
+  meta: { evaluationId: string; applicationId?: string; customerName?: string; callTypeLabel?: string }
+) {
+  const header = [
+    'CALL TRANSCRIPT',
+    meta.applicationId && `Application ID: ${meta.applicationId}`,
+    meta.customerName && meta.customerName !== 'Unknown' && `Customer: ${meta.customerName}`,
+    meta.callTypeLabel && `Call type: ${meta.callTypeLabel}`,
+    `Evaluation ID: ${meta.evaluationId}`,
+    data?.language && `Language: ${data.language}`,
+  ].filter(Boolean)
+
+  const segments: any[] = data?.segments || []
+  const body = segments.length
+    ? segments.map((seg) =>
+        `[${formatTimestamp(seg.start)}] ${speakerName(data.speakers, seg.speaker)}: ${(seg.text || '').trim()}`)
+    : [String(data?.transcript || '')]
+
+  return [...header, '', ...body, ''].join(String.fromCharCode(13, 10))
 }
 
 // Get transcript

@@ -1,0 +1,109 @@
+{
+  "_comment": "Scorecard v1 (client V2.1 Simple). Criteria text, points, MUST flags and sections come from the Excel templates; this file adds the scoring rules from the three V2.1 checklist documents. Rebuild rubric.json with: python scorecards/build_rubric.py 1",
+  "call_types": {
+    "BCM_PHYSICAL_PD": {
+      "type_note": "Single-speaker self-audio narration by the BCM, recorded the same day after the Physical PD visits (business, home, property). The BCM tells what he SAW, checked and heard. It is not a decision.",
+      "section_names": {"A": "Visit & Photos", "B": "Business", "C": "Farm, Dairy & Other Family Income", "D": "Loans & Repayment", "E": "Family & Home", "F": "Property", "G": "Loan Purpose & Your View"},
+      "duration_minutes": [15, 25],
+      "applicable_rule": "fixed",
+      "e6_input": "other_income",
+      "absence_rule": "If something does NOT exist for this household (no agricultural land, no dairy animals, no other family income, no defaults, no enquiries, no warning signs, no property risks) and the BCM SAYS SO clearly in the recording, that counts as FULLY covered: mark Yes, full points. Silence is not the same thing — if the BCM never mentions the topic at all, it is No.",
+      "general_rules": [
+        "Group C (farm, dairy and other family income) is ALWAYS scored. If there is no land / dairy / other income and the BCM says so clearly, those items get full points; if he never mentions them, they score 0.",
+        "Loans: only ACTIVE loans need to be discussed. Closed loans need NOT be discussed — never cut points for not discussing a closed loan.",
+        "Property papers not with the borrower: if the BCM says so clearly in the recording, and when they will be given, the paper-related parts of F2 and F3 count as covered."
+      ],
+      "criteria": {
+        "A5": {"required": {"phrases": "PHOTO", "missing": "photos taken/uploaded are never mentioned"}},
+        "B5": {"required": {"phrases": "STOCK", "missing": "stock is never mentioned, so it cannot have been counted"}},
+        "B6": {"guidance": "BALL-PARK income only — no income maths, margins or AA arithmetic are needed. Yes needs BOTH numbers said: (1) what the CUSTOMER says his monthly income from the business is, and (2) the BCM's OWN rough estimate of the monthly income. Only one of the two = Half. Neither = No."},
+        "B7": {"required": {"phrases": "AA", "missing": "the Account Aggregator check is never mentioned"}},
+        "B8": {"required": {"phrases": "NEIGHBOUR", "missing": "no business neighbour is ever mentioned"}},
+        "C1": {"absence_counts": true, "guidance": "A clear statement that the family has NO agricultural land = Yes (no Khasra or land details needed). If there is land: Yes needs how many acres, in whose name, and whether the family cultivates it themselves or gives it to someone else."},
+        "C2": {"absence_counts": true, "guidance": "If the BCM has said there is NO land = Yes. Otherwise Yes needs how many crops a year and the profit per season after all expenses. Mandi receipts, KCC and yield details are NOT required."},
+        "C3": {"absence_counts": true, "guidance": "A clear statement that there are NO dairy animals = Yes. If there are animals: Yes needs how many are milking, litres of milk sold per day, and where it is sold."},
+        "C4": {"absence_counts": true, "guidance": "Other income of the WHOLE family, other than the main business, farm and dairy: each source, who earns it, and any proof. A clear statement that there is no other income = Yes."},
+        "D1": {"absence_counts": true, "guidance": "Only ACTIVE loans in the CRIF of the borrower and co-borrowers — lender, EMI, outstanding — discussed with the customer. Closed loans need NOT be discussed. Guarantor loans and loans outside the CRIF are no longer required. A clear statement that there are no active loans = Yes."},
+        "D2": {"absence_counts": true, "guidance": "Past defaults with the reason, and any loan in default NOW with the reason. A clear statement that there are no defaults = Yes. NACH / how EMIs are paid is NOT required."},
+        "D3": {"guidance": "An approximate overall monthly family expense figure is enough for Yes. School fees are optional. Next-12-month expenses are NOT needed."},
+        "D4": {"absence_counts": true, "guidance": "Enquiries in the last 3 months (from CRIF): how many, and for each the current status, sanctioned or not, and if not sanctioned the reason. A clear statement that there are no enquiries = Yes. Surplus arithmetic is NOT required."},
+        "E2": {"guidance": "Yes needs: co-borrowers met in person and aware of the loan; KYC IDs (Aadhaar / PAN / Voter / Samagra) of the borrower and ALL co-borrowers checked; and every other family member noted with name, age and what they do (they need not be met)."},
+        "E3": {"required": {"phrases": "NEIGHBOUR", "missing": "no home neighbour is ever mentioned"}},
+        "E4": {"required": {"phrases": "CLEANTRACK", "missing": "the Clean Track Reward was never explained"}},
+        "F2": {"guidance": "If the original papers are NOT with the borrower and the BCM says so clearly, and when they will be given, the paper-related parts count as covered — do not cut points for them. Naming all owners / legal heirs as co-borrowers is still required.", "required": {"phrases": "PAPERS", "missing": "no property document type is ever named"}},
+        "F3": {"guidance": "If the papers are NOT with the borrower and the BCM says so clearly (and when they will be given), do not cut points for the paper-genuineness checks. The question whether the property is already mortgaged elsewhere must still be asked."},
+        "F5": {"absence_counts": true, "guidance": "Saying clearly that there are no such risks (\"none\") = Yes."},
+        "G3": {"absence_counts": true, "guidance": "Saying clearly that no warning signs were seen (\"none\") = Yes."}
+      },
+      "red_flags": "  PD-RF-1 Business appears staged/fake — borrowed stock, arranged premises, or scale far below the claim. [STOP - RCU referral]\n  PD-RF-2 Borrower avoided meeting at the business / met only away from the premises. [re-visit required]\n  PD-RF-3 Neighbours contradict the borrower's business or character claims. [record verbatim; escalate to RCM]\n  PD-RF-4 Undisclosed obligations found on the ground (hand loans, MFI, society, chit) that are not in the CRIF. [re-run obligations in CAM]\n  PD-RF-5 Agri income claimed but land not owned / not cultivated / no yield proof. [strike agri income]\n  PD-RF-6 Collateral problem — photocopy only, seal/number missing, owner not on the loan, disputed, or property already mortgaged elsewhere. [STOP - Legal/RCU]\n  PD-RF-7 Family or co-borrower unaware of, or opposed to, the loan or the mortgage. [hold; RCM to re-probe]\n  PD-RF-8 Commission demand or a middleman between the customer and Prodigee. [STOP - CCRO + conduct referral]\n  PD-RF-9 Sales or a physical record (milk register, sales book, stock) states more than the AA credits, purchase bills or the officer's own count supports. [strike/cap the affected income; note even if the officer already flagged it]\n  PD-RF-10 Customer avoids meeting at the business or is evasive about his bank accounts. [re-visit; escalate to RCM]"
+    },
+    "BM_AUDIO_FI": {
+      "type_note": "Two-party phone call. The BM calls the customer on his own number for a 5-15 minute genuineness and eligibility check (not a PD): is the customer real, does he know what he applied for, is the income prima facie enough, is the property mortgageable, is it a fresh loan or a BT, did the file come through the right channel.",
+      "section_names": {"A": "Call Opening & Identity", "B": "Sourcing, RM Visit & Login Fee", "C": "Loan, Product & End Use", "D": "All Incomes of the Household", "E": "Current Loans & Other Applications", "F": "Collateral Property", "G": "Call Conduct & Next Steps"},
+      "duration_minutes": [5, 15],
+      "applicable_rule": "fixed",
+      "e6_input": "both_sides_audible",
+      "absence_rule": "If the customer clearly says something does NOT exist (no farm land, no dairy animals, no other business, no other income, no active loan, no overdue, no other application, no existing loan on the property) in answer to the BM's question, that counts as FULLY covered: mark Yes, full points. Silence is not the same thing — if the topic never comes up, it is No.",
+      "general_rules": [
+        "Loans: only ACTIVE loans need to be checked. Closed loans need NOT be checked — never cut points for a closed loan.",
+        "The FORWARD / REJECT decision is NOT part of this scorecard — do not look for it or mark anything down for its absence."
+      ],
+      "criteria": {
+        "A1": {"required": {"phrases": "RECORDING", "missing": "the \"yeh call record ho rahi hai\" notice was never said"}},
+        "A3": {"guidance": "Scored on whether the BM ASKS the customer if he knows he has applied for a loan with Prodigee Finance Limited. If the customer cannot say the name correctly, do NOT cut points — asking the question clearly is Yes."},
+        "A4": {"guidance": "Yes needs the BM to say that before calling he has seen all three: the Prodigee BPS score, the CRIF score, and the business photos of the borrower. One or two of the three = Half."},
+        "B1": {"guidance": "Yes needs the RM's NAME, WHEN he visited, and whether he visited the business AND the home."},
+        "B2": {"required": {"phrases": "LOGINFEE", "missing": "the login fee is never discussed"}},
+        "B3": {"required": {"phrases": "COMMISSION", "missing": "agent/broker/commission is never asked about"}},
+        "C1": {"required": {"phrases": "MORTGAGE", "missing": "the property being mortgaged is never spelled out"}},
+        "C2": {"guidance": "The BM checks the loan amount the customer requires. The customer stating the amount he needs = Yes. Tenure, EMI and the 10% comparison are NOT required."},
+        "C4": {"absence_counts": true, "guidance": "Yes needs the BM to establish whether this is a FRESH loan or a Balance Transfer (BT) from an existing lender, and whether there is already a loan on this property to take over / top up. The customer clearly saying it is a fresh loan with no existing loan on the property = Yes.", "required": {"phrases": "BT", "missing": "fresh loan vs balance transfer (BT) was never asked"}},
+        "D2": {"absence_counts": true, "guidance": "A clear statement that the borrower and co-borrowers run no other business = Yes."},
+        "D3": {"absence_counts": true, "guidance": "A clear statement that there is no additional income (salary, rent, pension, transport, family earnings) = Yes."},
+        "D4": {"absence_counts": true, "guidance": "Covers BOTH agriculture AND dairy. Land: acres, in whose name, crops, approximate yearly income, KCC. Animals: how many and litres of milk per day. The customer clearly saying there is no land AND no animals = Yes; only one of land / animals addressed = Half."},
+        "D5": {"guidance": "The BM ASKS whether the income of the WHOLE HOUSEHOLD put together is more than Rs. 30,000 per month, not counting agriculture income, and gets a Yes / No answer = Yes. The Rs. 15,000 single-earner test and a sufficiency opinion are NOT required."},
+        "E1": {"absence_counts": true, "guidance": "Every ACTIVE loan — lender, EMI, since when — checked with the customer against the BPS / CRIF. Closed loans need NOT be checked. MFI / gold / hand loans are no longer required. A clear statement that there are no active loans = Yes."},
+        "E2": {"absence_counts": true, "guidance": "For every active loan overdue NOW and any overdue in the PAST, the reason is asked. A clear statement that there is no overdue = Yes."},
+        "E3": {"absence_counts": true, "guidance": "Which bank / NBFC, how much, when, the STATUS and why. The customer clearly saying he has applied nowhere else = Yes. The total amount sought from all lenders is NOT required."},
+        "F2": {"required": {"phrases": "PAPERS", "missing": "no property document type is ever named"}},
+        "F3": {"absence_counts": true, "guidance": "Already mortgaged anywhere? Papers with any bank / finance company? Willing to mortgage? Dispute / court case is NOT required any more. The customer clearly saying it is not mortgaged anywhere and he is willing = Yes."},
+        "G2": {"required": {"phrases": "CLEANTRACK", "missing": "the Clean Track Reward was never explained"}}
+      },
+      "red_flags": "  FI-RF-1 Customer unaware a loan application exists, or does not know Prodigee. [STOP - RCU & CCRO, possible fraud]\n  FI-RF-2 Loan amount stated differs from the application by more than ±10%. [reconcile with RM]\n  FI-RF-3 Agent / broker / DSA / connector involvement surfaced in sourcing. [STOP - CCRO, channel integrity review]\n  FI-RF-4 Login fee collected by anyone other than the Prodigee RM, more than the PRAGATI amount, or no receipt; or anyone asked for commission or money. [STOP - CCRO + conduct referral]\n  FI-RF-5 Income below policy gates (household < ₹30,000/month without agri, or no earner ≥ ₹15,000). [REJECT at BM stage]\n  FI-RF-6 Overdue/bounce denied or not explained, or a loan disclosed that the bureau does not show. [reject or hold]\n  FI-RF-7 Property already mortgaged, papers with another lender, dispute, or reluctance to mortgage. [hold; Legal if a charge exists]\n  FI-RF-8 RM never visited the customer / the sourcing story contradicts the record. [return to RM]\n  FI-RF-9 An owner of the property not willing to be a co-borrower, or no female co-borrower. [hold]\n  FI-RF-10 BT / takeover case — an existing loan on the property the customer wants taken over (note the lender). [route as BT]\n  FI-RF-11 Someone prompting the customer in the background; answers sound coached. [responses unreliable; call again]"
+    },
+    "RCM_AUDIO_PD": {
+      "type_note": "Two-party phone call. After the BCM's Physical PD, the RCM calls the customer (10-20 min) and re-derives the key facts from the customer's own mouth — loan amount, fresh or BT, end use, every income, every active loan, family, property — as the check on the BCM.",
+      "section_names": {"A": "Call Opening & Identity", "B": "Loan Amount, BCM Visit & Integrity", "C": "End Use", "D": "Income — Call vs BCM Assessment", "E": "Obligations", "F": "Family & Co-Borrower", "G": "Collateral Property", "H": "Repayment Capacity & Intent", "I": "Disclosures & Close"},
+      "duration_minutes": [10, 20],
+      "applicable_rule": "fixed",
+      "e6_input": "both_sides_audible",
+      "absence_rule": "If the customer clearly says something does NOT exist (no BT / it is a fresh loan, no income-generating loan, no other running loan, no mortgage on the property, no farm land, nothing pending) in answer to the RCM's question, that counts as FULLY covered for that part: mark Yes. Silence is not the same thing — if the topic never comes up, it is No.",
+      "general_rules": [
+        "Loans: only ACTIVE loans (running today) need to be checked. Closed loans need NOT be checked — never cut points for a closed loan.",
+        "The female co-borrower does NOT have to be spoken to on this call. What is scored is that the BORROWER confirms she knows about the loan and is part of it (A4, F2).",
+        "There is no decision item any more: the RCM's approve / reject note is NOT part of this scorecard."
+      ],
+      "criteria": {
+        "A1": {"required": {"phrases": "RECORDING", "missing": "the \"yeh call record ho rahi hai\" notice was never said"}},
+        "A3": {"guidance": "Scored on whether the RCM ASKS the customer where he has logged the loan file (which company / branch). If the customer does not remember, do NOT cut points — asking the question clearly is Yes."},
+        "A4": {"guidance": "Yes needs the RCM to ask the borrower whether the FEMALE CO-BORROWER (wife, or mother if unmarried) knows about this loan and will be part of it, and her name. Speaking to her is not required."},
+        "B3": {"required": {"phrases": "COMMISSION", "missing": "commission / agent involvement was never asked about"}},
+        "B4": {"required": {"phrases": "MORTGAGE", "missing": "the property being mortgaged is never spelled out"}},
+        "B5": {"absence_counts": true, "guidance": "Saying clearly that nothing is pending = Yes."},
+        "B6": {"absence_counts": true, "guidance": "Yes needs the RCM to establish whether this is a FRESH loan or a Balance Transfer (BT) from another lender; if BT, whether the customer has applied to the existing lender for the LOD (List of Documents) and the FCL (Foreclosure Letter). A clear 'fresh loan, no BT' = Yes.", "required": {"phrases": "BT", "missing": "fresh loan vs balance transfer (BT) was never asked"}},
+        "D4": {"absence_counts": true, "guidance": "Yes needs BOTH parts: (1) agriculture — land in whose name, acres, crops each season, yearly income, KCC — or a clear 'no farm land'; and (2) the missed-income question (dairy / milk, wife, father, brother, son — any business or job, rent). Only one part = Half."},
+        "D5": {"required": {"phrases": "AA", "missing": "the Account Aggregator check is never mentioned"}},
+        "D6": {"absence_counts": true, "guidance": "The RCM goes through the ACTIVE loans and picks out any tractor, commercial vehicle, construction equipment or other income-earning-asset loan, and asks what work it does, how many days a month and the earning per month. A clear statement that there is no such loan = Yes."},
+        "E1": {"absence_counts": true, "guidance": "ACTIVE loans only — company, EMI, since when — listed by the customer and reconciled by the RCM. Closed loans need NOT be checked. A clear statement that there are no active loans = Yes."},
+        "E2": {"absence_counts": true, "guidance": "Only loans RUNNING TODAY, asked by name household-wide: samooh / group / MFI (including in the wife's name), KCC, society / PACS, gold pledged, hand loan / bazaar udhaar. Asking by name and the customer saying none of these exist = Yes."},
+        "F2": {"guidance": "Speaking to the female co-borrower on this call is NOT required. Yes needs the BORROWER to clearly know that a female co-borrower — wife, or mother if unmarried — is MANDATORY and that she is part of this loan."},
+        "G1": {"required": {"phrases": "PAPERS", "missing": "no original property document is ever named"}},
+        "G2": {"guidance": "The customer's own value of the property (\"aaj bechni ho to kitne ki hai?\") stated = Yes. No comparison with the technical valuation is required."},
+        "G3": {"absence_counts": true, "guidance": "Yes needs the RCM to ask whether this property is already mortgaged with any other Bank / FI, and if yes, which one. The customer clearly saying it is not mortgaged anywhere = Yes. Dispute / court case is NOT part of this item any more.", "required": {"phrases": "MORTGAGE", "missing": "whether the property is already mortgaged with another bank / FI was never asked"}},
+        "H3": {"required": {"phrases": "NACH", "missing": "NACH / auto-debit commitment was never mentioned"}},
+        "I3": {"required": {"phrases": "NEXTSTEPS", "missing": "the next steps (sanction / KFS / disbursement / grievance) were never told"}}
+      },
+      "red_flags": "  RF-1  Customer does not know a file exists / does not know Prodigee — possible agent fraud. [STOP - RCU & CCRO]\n  RF-2  Loan amount stated differs from the CAM by more than 10%. [reconcile with BCM]\n  RF-3  End use on the call conflicts with the End-Use Declaration / CAM. [fresh declaration; CCRO note]\n  RF-4  Customer-stated income differs from the CAM assessed income by more than 20%. [return for reassessment]\n  RF-5  A loan / EMI disclosed that is not in the CAM — MFI, society, gold, hand loan included. [re-run FOIR]\n  RF-6  Property dispute, existing mortgage / charge, or third-party claim. [STOP - refer Legal]\n  RF-7  Someone prompting the customer in the background — answers unreliable. [re-conduct]\n  RF-8  Customer expects a different product (unsecured / government scheme) or was promised waivers. [mis-selling]\n  RF-9  Income arithmetic cannot support the EMI. [return to credit for FOIR re-check]\n  RF-10 Reluctance on mortgage, NACH, insurance or any sanction condition. [hold sanction]\n  RF-11 Anyone demanded commission, fees or money for this loan. [STOP - CCRO + conduct referral]\n  RF-12 BCM did not visit the business and / or the home, or the visit was incomplete. [return file]"
+    }
+  }
+}

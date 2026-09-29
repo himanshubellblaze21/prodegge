@@ -46,7 +46,7 @@ def generate_presigned_url(event, context):
         filename = body.get('filename')
         application_id = body.get('application_id')
         customer_name = body.get('customer_name')
-        call_type = body.get('call_type', 'RCM_AUDIO_PD')
+        call_type = body.get('call_type', 'AUTO_DETECT')
         
         if not filename or not application_id:
             return {

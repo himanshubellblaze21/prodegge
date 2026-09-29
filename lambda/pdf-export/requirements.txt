@@ -1,0 +1,5 @@
+# boto3 is provided by the Lambda runtime.
+openpyxl==3.1.5
+pycel==1.0b30
+fpdf2==2.8.8
+uharfbuzz==0.56.2

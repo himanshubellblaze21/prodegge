@@ -1,0 +1,30 @@
+{
+  "current": "1",
+  "versions": {
+    "0": {
+      "label": "Legacy",
+      "client_version": "V2.0 Simple",
+      "description": "Scorecards in use until 28 Sep 2026. Evaluations stored without a scorecard_version were scored on these.",
+      "templates": {
+        "BCM_PHYSICAL_PD": {"source": "Audio Assessment and Scoring/BCM Physical PD/BCM_PD_Audio_Scorecard_V2.0_Simple_2.xlsx", "s3_key": "templates/bcm_pd_template.xlsx"},
+        "BM_AUDIO_FI":     {"source": "Audio Assessment and Scoring/BM Audio FI/BM_FI_Audio_Scorecard_V2.0_Simple.xlsx",        "s3_key": "templates/bm_fi_template.xlsx"},
+        "RCM_AUDIO_PD":    {"source": "Audio Assessment and Scoring/RCM Audio PD/RCM_Audio_PD_Scorecard_V2.0_Simple.xlsx",      "s3_key": "templates/rcm_audio_pd_template.xlsx"}
+      }
+    },
+    "1": {
+      "label": "v1",
+      "client_version": "V2.1 Simple",
+      "description": "First versioned scorecards (client V2.1 Simple, received 28 Sep 2026).",
+      "templates": {
+        "BCM_PHYSICAL_PD": {"source": "templates_version_1.0/BCM_PD_Audio_Scorecard_V2.1_Simple.xlsx", "s3_key": "scorecards/v1/bcm_pd_scorecard.xlsx"},
+        "BM_AUDIO_FI":     {"source": "templates_version_1.0/BM_FI_Audio_Scorecard_V2.1_Simple.xlsx",  "s3_key": "scorecards/v1/bm_fi_scorecard.xlsx"},
+        "RCM_AUDIO_PD":    {"source": "templates_version_1.0/RCM_Audio_PD_Scorecard_V2.1_Simple.xlsx", "s3_key": "scorecards/v1/rcm_audio_pd_scorecard.xlsx"}
+      },
+      "rulebooks": {
+        "BCM_PHYSICAL_PD": "templates_version_1.0/BCM_PD_Audio_Checklist_and_Scoring_V2.1_Simple.docx",
+        "BM_AUDIO_FI":     "templates_version_1.0/BM_FI_Audio_Checklist_and_Scoring_V2.1_Simple.docx",
+        "RCM_AUDIO_PD":    "templates_version_1.0/RCM_Audio_PD_Checklist_and_Scoring_V2.1_Simple.docx"
+      }
+    }
+  }
+}
