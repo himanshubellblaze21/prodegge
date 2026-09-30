@@ -1000,6 +1000,11 @@ Decide which this transcript is. Base it on the SHAPE of the language:
 - Interview  → questions addressed to another person, answers coming back, second-person address.
 - Self-audio → continuous first-person narration by one person describing what he did and saw,
                with no one answering him.
+- Reported speech is NOT an interview. A BCM telling the recorder what the customer said, in the
+  third person ("उन्होंने बताया कि…", "राजू जी ने बताया…", "इनकी आय … है", "इनके पास तीन ऑटो हैं"),
+  is a self-audio report.
+- To call it an interview, your "evidence" must be an actual question put to the customer and
+  the customer's answer, copied verbatim. If you cannot quote such an exchange, it is self-audio.
 
 TRANSCRIPT:
 {transcript}
@@ -1033,9 +1038,27 @@ def check_bcm_self_audio(transcript: str, segments: list) -> dict:
         'evidence': (d.get('evidence') or '').strip()[:300],
         'evidence_timestamp': ev['timestamp'],
     }
+    # The model's verdict refuses the whole recording, so it is only accepted
+    # on evidence. A client BCM narration (one voice, not a single question)
+    # was refused as an "interview" on a quote that was plain narration.
+    if not result['is_self_audio']:
+        speakers = {s.get('speaker') for s in segments if s.get('speaker')}
+        if len(speakers) <= 1:
+            result.update(is_self_audio=True, overridden='one_speaker',
+                          override_reason='Transcribe detected a single voice — an interview needs two')
+        elif not (ev['verified'] and _SELF_AUDIO_QA.search(result['evidence'])):
+            result.update(is_self_audio=True, overridden='no_qa_evidence',
+                          override_reason='the quoted evidence is not a question-and-answer exchange '
+                                          'found in this recording')
     print(f"Self-audio check: kind={result['kind']} confidence={result['confidence']} "
-          f"reason={result['reason']}")
+          f"reason={result['reason']}"
+          + (f" | OVERRIDDEN: {result['override_reason']}" if result.get('overridden') else ''))
     return result
+
+
+# Marks of a question put to the customer: a question mark, or second-person
+# address ("आप…", "तुम", "बताइए"). Third-person narration has none of these.
+_SELF_AUDIO_QA = re.compile(r'\?|आप|तुम|तुम्ह|बताइ|बताएं|बतायें|बोलिए|बोलो')
 
 
 def build_profile_prompt(transcript: str, call_type: str) -> str:
@@ -2329,6 +2352,10 @@ def lambda_handler(event, context):
         if call_type == 'BCM_PHYSICAL_PD':
             self_audio = check_bcm_self_audio(transcript, segments)
             raw_outputs['self_audio_check'] = self_audio
+            if self_audio.get('overridden') == 'no_qa_evidence':
+                review_reasons.append(
+                    'The self-audio check called this an interview, but its evidence was not a '
+                    'question-and-answer exchange — evaluated as a BCM self-audio report; verify')
             if not self_audio['is_self_audio'] and self_audio['confidence'] in ('high', 'medium'):
                 verdict = (
                     'NOT EVALUABLE — a BCM Physical PD submission must be a self-audio recording '
@@ -2527,6 +2554,7 @@ def lambda_handler(event, context):
             'evaluated_at': datetime.utcnow().isoformat(),
             'scorecard_version': version,
             'scorecard_label': version_label,
+            'evaluator_model': BEDROCK_MODEL_ID,
             'duration_seconds': dur_secs,
             'speaker_count': speaker_count,
             'transcript_chars': len(transcript),

@@ -34,6 +34,11 @@ dynamodb = boto3.resource('dynamodb')
 REPORTS_BUCKET = os.environ['REPORTS_BUCKET']
 DYNAMODB_TABLE = os.environ['DYNAMODB_TABLE']
 
+# Bump when the PDF layout changes: the cache key carries it, so PDFs made
+# with an older layout are rebuilt on their next download instead of served.
+# r2 = My Result sheet only, conditional colours, boxed evidence column.
+PDF_LAYOUT = 'r2'
+
 TYPE_LABELS = {
     'BCM_PHYSICAL_PD': ('BCM_PD', 'BCM Physical PD'),
     'BM_AUDIO_FI': ('BM_FI', 'BM Audio FI'),
@@ -93,7 +98,7 @@ def lambda_handler(event, context):
         if not excel_key:
             return response(404, {'error': 'Scorecard not available yet'})
 
-        pdf_key = excel_key.rsplit('.', 1)[0] + '.pdf'
+        pdf_key = excel_key.rsplit('.', 1)[0] + f'.{PDF_LAYOUT}.pdf'
         excel_modified = _last_modified(excel_key)
         if excel_modified is None:
             return response(404, {'error': 'Scorecard file not found'})

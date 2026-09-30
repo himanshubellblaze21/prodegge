@@ -397,6 +397,13 @@ def fill_scorecard(ws, result: dict, derived: dict, criteria: list, call_type: s
 
     header_row = min(item_rows.values()) - 2 if item_rows else 9
     write_evidence_header(ws, EVIDENCE_COL['scorecard'], header_row)
+    if item_rows:
+        from openpyxl.utils import column_index_from_string
+        ev_col = column_index_from_string(EVIDENCE_COL['scorecard'])
+        # Styled after the note column (G): H beside it is the template's
+        # unstyled "(helper)" column.
+        for row in range(header_row, max(item_rows.values()) + 1):
+            match_neighbour_style(ws, row, ev_col, src_col=7)
     print(f"  Scorecard inputs filled: {filled} items (formulas left intact)")
 
     write_red_flags_block(ws, result, max(item_rows.values()) if item_rows else 60)
@@ -585,12 +592,35 @@ def link_my_result_evidence(ws, scorecard_name: str):
     if not isinstance(hdr, MergedCell):
         hdr.value = 'Evidence — timestamp & exact words'
         hdr.font = Font(bold=True)
+    # The added column had no styling, so the quotes looked detached from
+    # their rows. Give each cell the look of the one beside it: the header its
+    # blue band, section rows their band, item rows their box.
+    for row in range(header_row, max(item_rows.values()) + 1):
+        match_neighbour_style(ws, row, 7)
     try:
         ws.column_dimensions['G'].width = 60
     except Exception:
         pass
     print(f"  My Result evidence links: {written}")
     return written
+
+
+def match_neighbour_style(ws, row: int, col: int, src_col: int = None):
+    """Style cell (row, col) like the cell to its left — or src_col — or that merge's anchor."""
+    from copy import copy
+    from openpyxl.styles import Alignment
+    cell = ws.cell(row=row, column=col)
+    if isinstance(cell, MergedCell):
+        return
+    src = ws.cell(row=row, column=src_col or col - 1)
+    if isinstance(src, MergedCell):
+        src = next((ws.cell(row=m.min_row, column=m.min_col) for m in ws.merged_cells.ranges
+                    if src.coordinate in m), src)
+    cell.border = copy(src.border)
+    if src.fill is not None and src.fill.fill_type:
+        cell.fill = copy(src.fill)
+        cell.font = copy(src.font)
+    cell.alignment = Alignment(wrap_text=True, vertical=src.alignment.vertical or 'center')
 
 
 

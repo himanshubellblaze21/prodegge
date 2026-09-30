@@ -251,7 +251,9 @@ export async function getTranscript(evaluationId: string) {
 // Poll evaluation status
 export async function pollEvaluationStatus(evaluationId: string) {
   try {
-    const response = await apiClient.get(`/evaluations/${evaluationId}/status`)
+    // A poll that never answers would otherwise freeze the progress screen:
+    // time it out so the tracker's next poll takes over.
+    const response = await apiClient.get(`/evaluations/${evaluationId}/status`, { timeout: 20000 })
     return response.data
   } catch (error: any) {
     console.error('Poll status error:', error)

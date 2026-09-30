@@ -92,6 +92,7 @@ def score(evaluation_id, version):
         'speaker_count': speaker_count, 'transcript_chars': len(transcript),
         'evidence_audit': audit, 'red_flags': red_flags, 'other_income': other_income,
         'header': header, 'items': items, 'summary': {}, 'scoring': scoring,
+        'evaluator_model': handler.BEDROCK_MODEL_ID,
         'evaluated_at': handler.datetime.utcnow().isoformat(),
     }
 
